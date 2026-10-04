@@ -177,6 +177,27 @@ an internet connection.
 
 ---
 
+## Running with Docker
+
+The game can also be self-hosted with Docker. The included `Dockerfile` packages the
+browser version with a lightweight Nginx web server, and `docker-compose.yml` provides
+a simple way to build and run it.
+
+With Docker and Docker Compose installed:
+
+```bash
+git clone https://github.com/circlenline/DUELIST_KINGDOM_ROGUELIKE.git
+cd DUELIST_KINGDOM_ROGUELIKE
+docker compose up -d --build
+```
+
+Then open: 
+```
+http://localhost:2002
+```
+
+---
+
 ## Reporting bugs and AI misplays
 
 There's a **Report** button in the duel's top bar and on the end-of-duel screen. It
