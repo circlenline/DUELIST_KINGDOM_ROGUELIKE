@@ -80,5 +80,7 @@ node check-tsukuyomi.mjs 2>&1 | tail -1
 node check-rulings-2509.mjs 2>&1 | tail -1
 # La prioridad de 2005: el motor, la ventana del humano en «auto» y lo que la IA da por hecho.
 node check-prioridad.mjs 2>&1 | tail -1
+# La moneda (Fairy Box, Gatling Dragon…) tiene que salir cara a veces: semilla mezclada.
+node check-moneda.mjs 2>&1 | tail -1
 # Replays de torneo de DuelingBook: que el importador lea bien la final del GFCEU 2026 y el marcador se empaquete.
 ( cd "$W/replays" && node build-bookmarklet.mjs >/dev/null && node check-replays.mjs 2>&1 | tail -1 )

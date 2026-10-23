@@ -28,7 +28,10 @@ export function makeTrivialResolver(X){
       case T.SELECT_CARD: case T.SELECT_TRIBUTE: {
         const n=m.selects?.length ?? 0, min=m.min??1, max=m.max??min;
         // hay que coger exactamente todas las que hay: no hay elección
-        if(n>0 && min===max && min===n)
+        /* Ojo con los tributos que valen por dos (Double Coston): ahí
+           «todas» puede ser pasarse. Eso lo decide quien sepa contar. */
+        const dobles = m.type===T.SELECT_TRIBUTE && (m.selects ?? []).some(s => (s.release_param ?? 1) > 1);
+        if(n>0 && min===max && min===n && !dobles)
           return { type: m.type===T.SELECT_TRIBUTE?R.SELECT_TRIBUTE:R.SELECT_CARD,
                    indicies: Array.from({length:n},(_,i)=>i) };
         return null;

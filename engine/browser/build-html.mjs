@@ -8,7 +8,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
    (`out/goat-publico.html`): sin los mazos propios de E sembrados
    (`mazos-propios.json`), que se quedan solo en su ordenador. La de
    trabajo (`out/goat.html`) sigue llevándolos. */
-const VERSION = "1.0";
+const VERSION = "1.2";
 const PUBLICO = process.env.GOAT_PUBLICO === "1";
 const R = f => readFileSync(f,"utf-8");
 const stripExports = s => s.replace(/^export\s+(const|function|class|async function|let)/gm,"$1")
@@ -131,6 +131,7 @@ const html = R("./src/template.html")
   .replace("/*__MODULES__*/", () => parts)
   .replace("/*__CARDS__*/",   () => R("./out/cards.subset.json"))
   .replace("/*__NAMES__*/",   () => R("./out/names.subset.json"))
+  .replace("/*__CADENAS__*/", () => existsSync("../data/pool_strings.json") ? R("../data/pool_strings.json") : "{}")
   .replace("/*__DECK__*/",    () => R("./out/deck.json"))
   // TRAMPA: esto leía ./out/mazos.json, que era una copia a mano y nadie
   // regeneraba. Arreglar un mazo en data/mazos.json no llegaba al HTML y

@@ -163,6 +163,9 @@ function resumenPublicoDelLog(){
       case "chain":
         l.push(`  ${quien(d.controller)} · activa ${nombreLog(d.code)}`);
         break;
+      case "revelarMazo":
+        l.push(`  se revelan del mazo de ${quien(d.player)}: ${(d.codes ?? []).map(nombreLog).join(", ")}`);
+        break;
       case "attack":
         l.push(`  ataque${d.targetUid ? "" : " directo"}`);
         break;
@@ -262,6 +265,7 @@ function textoDelLog({ crudo = true, publico = true } = {}){
     "GOAT FORMAT — registro de partida",
     "fecha: "+new Date().toISOString(),
     "semilla: "+SEED,
+    "rng: v2",
     "modo cadenas: "+chainMode,
     "nivel del rival: "+nivelBot,
     "tu mazo: "+(CONFIG?.nombreMazo??"?")+" · mazo rival: "+(CONFIG?.nombreRival??"?"),
@@ -290,6 +294,12 @@ function logIt(kind, data){
              fase:PHNAME[duel?.phase]??"", kind, data });
   if(LOG.length>6000) LOG.splice(0,2000);
 }
+/* Los errores sueltos de la página (ver el oyente de errores del
+   arranque): al log, para que lleguen con el Reportar, y a la telemetría. */
+globalThis.__errorTardio__ = (msg, err) => {
+  try{ logIt("ERROR suelto", { msg:String(msg).slice(0,200), pila:String(err?.stack ?? "").slice(0,400) }); }catch(_){}
+  try{ globalThis.__TELE__?.error?.("suelto: " + String(msg).slice(0,120)); }catch(_){}
+};
 const queue=[]; const onEvent = e => { logIt("evento", e); queue.push(e);
   if(REMOTO?.rol === "anfitrion") REMOTO.eventos.push(e); };
 const nm = c => (NAMES[c]?.name ?? "#"+c);
@@ -339,6 +349,14 @@ async function drain(){
     if(rendido) return true;
     const e=queue.shift();
     switch(e.t){
+      /* ══ LOS LP DE SALIDA (GitHub #11 y #26) ══
+         La vista se monta ANTES de crear el duelo y pintaba 8000 a los dos.
+         Pegasus empieza con 10000: al pagar Toon World pasaba de «8000» a
+         9000 y parecía que ganaba vida. El motor lo hacía bien; la
+         pantalla no. Ahora el marcador se pone con los LP de verdad. */
+      case "ready":
+        V.setLP(0, e.lp0 ?? duel.lp[0], true); V.setLP(1, e.lp1 ?? duel.lp[1], true);
+        break;
       case "turn":
         V.banner(`Turno ${e.turn} — ${e.player===ME?"Tú":"Oponente"}`,
                  e.player===ME?"var(--gold)":"#ff8f7a");
@@ -392,6 +410,21 @@ async function drain(){
           await pausa(750);
         }
         break;
+      /* Cyber Jar y compañía: las de arriba del mazo se enseñan a los dos.
+         Se abre el visor y el duelo espera a que lo cierres (en las
+         pruebas que juegan solas, un aviso y seguir). */
+      case "revelarMazo": {
+        const cartas = (e.codes ?? []).filter(Boolean)
+          .map((code, i) => ({ code, location:1, controller:e.player, position:1, _i:"rv"+i }));
+        if(!cartas.length) break;
+        const titulo = `Cartas reveladas · ${e.player === ME ? "tu mazo" : "mazo del rival"}`;
+        if(AUTO_YO || globalThis.GOAT_AUTOJUGAR){ V.toast(titulo); await pausa(500); break; }
+        /* En una sala no se para: el reloj del otro corre. Se enseña y ya. */
+        if(REMOTO){ V.openZoneView(titulo, cartas); await pausa(900); break; }
+        await new Promise(res => { V.setZoneViewClose(res); V.openZoneView(titulo, cartas); });
+        V.setZoneViewClose(null);
+        break;
+      }
       /* Nada de cartel a pantalla completa: pasa en cada ataque. Basta con
          la etiqueta sobre Battle, el HUD y el título del panel de cadena. */
       case "damageStep":
@@ -494,7 +527,14 @@ function panel(title, options, note){
      en cero acciones sin decir por qué. */
   ponerPlegado(p);
   p.appendChild(box); p.style.display="block";
-  if(plegado()) p.style.display="none";
+  /* ══ UNA PREGUNTA DE VERDAD NO SE QUEDA PLEGADA (GitHub #12) ══
+     Con el panel plegado, «¿quieres responder?» y «¿activar el efecto?»
+     tampoco se veían: el duelo esperaba los 15 s de cada ventana sin que
+     el jugador supiera que le preguntaban algo («se queda atascado en el
+     Battle Step», «los turnos tardan muchísimo»). El log lo enseñaba:
+     doce ventanas seguidas agotadas en un solo turno del rival. Plegado
+     sigue valiendo para la Main Phase y la Battle Phase; lo demás sale. */
+  if(plegado() && !preguntaUrgente) p.style.display="none";
   /* Y que no se coma el marcador del rival: se mide, no se adivina. */
   else V.apartarPanel?.();
 }
@@ -630,6 +670,31 @@ function cartaDeDescripcion(d){
   }catch(e){}
   return null;
 }
+/* ══ LO QUE DICE CADA OPCIÓN ══
+   Reddit, 05-10: «Vampire Lord's options… only say Option 1-3 rather than
+   Monster, Spell, or Trap». La descripción de una opción es o un texto de
+   la carta —(código << 20) | índice, que remite a str1…str16 de la base,
+   ahora dentro del juego en `CADENAS_CARTA`— o un texto del sistema de
+   EDOPro (números pequeños). Lo que no se sepa leer sigue saliendo como
+   «Opción N». */
+/* 1: el motor lo manda al elegir CÓMO invocar o colocar un monstruo que
+   tiene otra forma (Fusilier Dragon, GitHub #3: salía «Opción 1»). */
+const SISTEMA = { 1:"Con sacrificios (la forma normal)", 60:"Cara", 61:"Cruz", 70:"Monstruo", 71:"Mágica", 72:"Trampa",
+                  573:"Añadir a la mano", 574:"Mandar al Cementerio",
+                  1213:"Descartar 1 Mágica", 1214:"No descartar" };
+function textoDeDescripcion(d){
+  try{
+    const b = BigInt(d ?? 0);
+    if(b > 1048575n){
+      const c = Number(b >> 20n), i = Number(b & 0xFFFFFn);
+      const C = globalThis.CADENAS_CARTA ?? {};
+      const alias = DB?.get?.(c)?.alias;
+      return C[c]?.[i] ?? (alias ? C[alias]?.[i] : null) ?? null;
+    }
+    const t = SISTEMA[Number(b)];
+    return t ? T(t) : null;
+  }catch(e){ return null; }
+}
 function momentoPregunta(m){
   const t = ((m?.hint_timing>>>0) || (m?.hint_timing_other>>>0)) >>> 0;
   /* Dentro del Damage Step manda el estado que lleva el adaptador: el
@@ -747,6 +812,10 @@ function respuestaPorTiempo(m){
     case MT.SELECT_IDLECMD:
       return { type:R.SELECT_IDLECMD, action: m.to_ep ? IA.TO_EP : m.to_bp ? IA.TO_BP : IA.TO_EP, index:null };
     case MT.SELECT_BATTLECMD:
+      /* Con un monstruo obligado a atacar (Berserk Gorilla) no hay salida:
+         el único gesto legal es atacar. */
+      if(!m.to_ep && !m.to_m2 && m.attacks?.length)
+        return { type:R.SELECT_BATTLECMD, action:BA.SELECT_BATTLE, index:0 };
       return { type:R.SELECT_BATTLECMD, action: m.to_ep ? BA.TO_EP : m.to_m2 ? BA.TO_M2 : BA.TO_EP, index:null };
     case MT.SELECT_CHAIN:
       return { type:R.SELECT_CHAIN, index: m.forced && m.selects?.length ? 0 : null };
@@ -1011,8 +1080,10 @@ function combinacionesSuma(m){
 }
 
 /* ── el resto de decisiones, en panel ── */
+let preguntaUrgente = false;
 function ask(m){
   enPantalla = m;
+  preguntaUrgente = m.type !== OCG.OcgMessageType.SELECT_IDLECMD && m.type !== OCG.OcgMessageType.SELECT_BATTLECMD;
   /* OJO CON EL NOMBRE. Esto se llamaba `T`, igual que la funcion de
      traduccion del modulo, y la tapaba dentro de toda esta funcion. El
      dia que alguien escribio T("Carta boca abajo") aqui dentro, el juego
@@ -1093,18 +1164,23 @@ function ask(m){
       /* El motor mete el código de la carta dentro de la descripción:
          así el panel dice de qué efecto habla en vez de "¿Confirmas?". */
       const cod = cartaDeDescripcion(m.description);
+      const que = textoDeDescripcion(m.description);
       return panel(conMomento(cod ? `¿Activar el efecto de ${nm(cod)}?` : "¿Confirmas?", m),[
         {label:"Sí",primary:true,run:()=>send({type:R.SELECT_YESNO,yes:true})},
-        {label:"No",run:()=>send({type:R.SELECT_YESNO,yes:false})}]);
+        {label:"No",run:()=>send({type:R.SELECT_YESNO,yes:false})}], que ? `«${que}»` : undefined);
     }
     case MT.SELECT_OPTION:
       return panel("Elige una opción",(m.options||[]).map((o,i)=>
-        ({label:`Opción ${i+1}`,run:()=>send({type:R.SELECT_OPTION,index:i})})));
+        ({label:textoDeDescripcion(o) ?? `Opción ${i+1}`,run:()=>send({type:R.SELECT_OPTION,index:i})})));
     case MT.SELECT_POSITION: {
       const P=OCG.OcgPosition,o=[];
       if(m.positions&P.FACEUP_ATTACK)   o.push({label:"Ataque",primary:true,run:()=>send({type:R.SELECT_POSITION,position:P.FACEUP_ATTACK})});
       if(m.positions&P.FACEUP_DEFENSE)  o.push({label:"Defensa",run:()=>send({type:R.SELECT_POSITION,position:P.FACEUP_DEFENSE})});
       if(m.positions&P.FACEDOWN_DEFENSE)o.push({label:"Defensa boca abajo",run:()=>send({type:R.SELECT_POSITION,position:P.FACEDOWN_DEFENSE})});
+      /* GitHub #1 y Reddit: con Reasoning, Monster Gate, Dimension Fusion
+         o Cyber Jar se preguntaba la posición sin decir de QUÉ monstruo.
+         El mensaje trae el código: se nombra y se enseña en el panel. */
+      if(m.code){ V.showDetail?.(m.code); return panel(`¿En qué posición pones ${nm(m.code)}?`, o); }
       return panel("¿En qué posición?",o);
     }
     case MT.SELECT_CARD: case MT.SELECT_TRIBUTE: case MT.SELECT_UNSELECT_CARD: {
@@ -1113,11 +1189,19 @@ function ask(m){
       const rt=m.type===MT.SELECT_TRIBUTE?R.SELECT_TRIBUTE
              :m.type===MT.SELECT_UNSELECT_CARD?R.SELECT_UNSELECT_CARD:R.SELECT_CARD;
       const chosen=[], uidOf=i=>duel.resolve(list[i], list[i].code)?.uid;
+      /* ══ UN TRIBUTO PUEDE VALER POR DOS ══
+         Reddit, 05-10: «Double Coston doesn't work with the double
+         tribute». En un tributo, `min` y `max` son TRIBUTOS, no cartas, y
+         cada carta dice cuántos vale (`release_param`: Double Coston, 2
+         para un monstruo OSCURO). Se contaban cartas, así que con Coston
+         sola el panel seguía pidiendo otra. */
+      const peso = i => m.type===MT.SELECT_TRIBUTE ? Math.max(1, Number(list[i]?.release_param) || 1) : 1;
+      const cuenta = () => chosen.reduce((s,i)=>s+peso(i), 0);
       const choose=i=>{
         if(enPantalla!==m) return;          // esa pregunta ya se contestó
         if(m.type===MT.SELECT_UNSELECT_CARD) return send({type:rt,index:i});
         const k=chosen.indexOf(i); k>=0?chosen.splice(k,1):chosen.push(i);
-        if(chosen.length>=(m.max??min) && chosen.length>=min) return send({type:rt,indicies:[...chosen]});
+        if(cuenta()>=(m.max??min) && cuenta()>=min) return send({type:rt,indicies:[...chosen]});
         render();
       };
       // Si alguna carta elegible NO está a la vista en el tablero (cementerio,
@@ -1157,7 +1241,7 @@ function ask(m){
           ? T("Carta boca abajo") : nm(c.code);
         const opts=list.map((c,i)=>({label:`${chosen.includes(i)?"✓ ":""}${etiqueta(c)} (${T(LOCNAME[c.location]??"?")})`,
           primary:chosen.includes(i),run:()=>choose(i)}));
-        if(m.type!==MT.SELECT_UNSELECT_CARD && chosen.length>=min)
+        if(m.type!==MT.SELECT_UNSELECT_CARD && cuenta()>=min)
           opts.unshift({label:`Confirmar (${chosen.length})`,primary:true,run:()=>send({type:rt,indicies:[...chosen]})});
         if(m.can_cancel) opts.push({label:"Cancelar",run:()=>send({type:rt,
           ...(m.type===MT.SELECT_UNSELECT_CARD?{index:null}:{indicies:null})})});
@@ -1392,8 +1476,15 @@ async function loopInterno(){
             || hayDisparadoresPendientes(q));               // dos disparadores a la vez
       ventanaPrioridad = chainMode!=="nunca" && ventanaDePrioridad(q) && prioridadPreguntada !== duel.ultimaInvocada;
       if(ventanaPrioridad) prioridadPreguntada = duel.ultimaInvocada;
+      /* ══ EN TU BATALLA NO SE SALTA NADA (GitHub #18) ══
+         «No puedo activar Limiter Removal en el Damage Step». La cadena de
+         la declaración de ataque terminaba (chainEnd → chainActive=false)
+         y desde ahí el modo «auto» tomaba las ventanas del Damage Step por
+         «tu turno, sin cadena» y las pasaba solas. Mientras hay un ataque
+         en curso, cada ventana se pregunta. */
+      const enBatalla = duel.atacante != null || V.momento?.() === "damage";
       if(q.type===OCG.OcgMessageType.SELECT_CHAIN && !q.forced && !disparadorPropio && !ventanaPrioridad
-         && chainMode==="auto" && !chainActive && duel.turnPlayer===ME){
+         && chainMode==="auto" && !chainActive && !enBatalla && duel.turnPlayer===ME){
         logIt("auto",{pregunta:"SELECT_CHAIN (ventana propia sin cadena)",respuesta:"no responder"});
         duel.respond({type:OCG.OcgResponseType.SELECT_CHAIN,index:null}); continue;
       }
@@ -1897,7 +1988,7 @@ export async function boot({ createCore, Xns, GoatDuel, makeAutoPlayer, makeTriv
     return;
   }
   await duel.create({ deck0:s0, deck1:s1, extra0:e0, extra1:e1,
-    seed:[BigInt(SEED), 7n, 13n, 29n],
+    seed:GoatDuel.semillaMotor(SEED),
     /* ══ LOS PUNTOS DE VIDA VAN POR LADO ══
        El campamento del Reino da vida extra AL JUGADOR, pero esto ponía
        un solo `lp` para los dos: el buff se lo llevaba también el rival

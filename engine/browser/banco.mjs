@@ -2717,6 +2717,102 @@ pos("reino 03-10", "Breaker se invoca de frente para romper su tapada antes de a
   return { d, q: preguntaIdle({ invoca:[h[0]], coloca:[h[0]], colocaMT:[h[1]], bp:true }),
            bien: r => r?.action === IA.SELECT_SUMMON && r?.index === 0 };
 });
+/* ══ Reddit, día 2 (05-10) ══ */
+pos("reddit 05-10", "Berserk Gorilla obligado a atacar: si no se puede pasar de fase, se ataca",
+    "Honest_Mids: «must attack into Mobius due to Berserk Gorilla's eff but he refused to attack and the game is at a standstill»", () => {
+  const d = mesa({ mios:{ campo:["Berserk Gorilla"] }, suyos:{ campo:["Mobius the Frost Monarch"] }, turno:6 });
+  const q = { ...preguntaBatalla([d.zones[0][L.MZONE][0]]), to_m2:false, to_ep:false };
+  return { d, q, bien: r => r?.type === R.SELECT_BATTLECMD && r?.action === BA.SELECT_BATTLE };
+});
+pos("reddit 05-10", "…y con la fase libre, el Gorilla no se estrella contra Mobius",
+    "control: sin obligación, 2000 contra 2400 no se ataca", () => {
+  const d = mesa({ mios:{ campo:["Berserk Gorilla"] }, suyos:{ campo:["Mobius the Frost Monarch"] }, turno:6 });
+  return { d, q: preguntaBatalla([d.zones[0][L.MZONE][0]]), bien: r => r?.action !== BA.SELECT_BATTLE };
+});
+pos("reddit 05-10", "Breaker no rompe un Call of the Haunted boca arriba sin monstruo",
+    "GeometryFan100: «destroyed my Call of the Haunted (not equipped to anything)… the AI gained nothing»", () => {
+  const d = mesa({ mios:{ campo:["Breaker the Magical Warrior"] },
+                   suyos:{ campo:[{carta:"Mystical Elf", pos:P.DEF}], mt:[{carta:"Call of the Haunted", pos:P.ATK}] }, turno:6 });
+  const b = d.zones[0][L.MZONE][0];
+  return { d, q: preguntaIdle({ activa:[b], bp:true }), bien: r => !(r?.action === IA.SELECT_ACTIVATE) };
+});
+pos("reddit 05-10", "…y si hay que elegir, rompe la tapada antes que el Call of the Haunted muerto",
+    "mismo caso, eligiendo objetivo", () => {
+  const d = mesa({ mios:{ campo:["Breaker the Magical Warrior"] },
+                   suyos:{ mt:[{carta:"Call of the Haunted", pos:P.ATK}, "Mirror Force"] }, turno:6 });
+  const [coth, tapada] = d.zones[1][L.SZONE];
+  d.cadena = [{ code:d.zones[0][L.MZONE][0].code, controller:0, uid:d.zones[0][L.MZONE][0].uid }];
+  return { d, q: preguntaObjetivo([coth, tapada]), bien: r => r?.indicies?.[0] === 1 };
+});
+pos("reddit 05-10", "con su Waboku ya resuelta no se ataca (ni daño ni destrucción este turno)",
+    "GeometryFan100: «I activated Waboku… The AI still decided to attack me with every monster»", () => {
+  const d = mesa({ mios:{ campo:["Jinzo","Airknight Parshath"] },
+                   suyos:{ campo:[{carta:"Sangan", pos:P.ATK}], mt:["Mirror Force"] }, turno:6 });
+  d.resueltasTurno = { turno:6, lista:[{ code:cod("Waboku"), controller:1 }] };
+  return { d, q: preguntaBatalla(d.zones[0][L.MZONE].filter(Boolean)), bien: r => r?.action !== BA.SELECT_BATTLE };
+});
+pos("reddit 05-10", "…sin Waboku, el mismo tablero se ataca",
+    "control", () => {
+  const d = mesa({ mios:{ campo:["Jinzo","Airknight Parshath"] },
+                   suyos:{ campo:[{carta:"Sangan", pos:P.ATK}] }, turno:6 });
+  return { d, q: preguntaBatalla(d.zones[0][L.MZONE].filter(Boolean)), bien: r => r?.action === BA.SELECT_BATTLE };
+});
+pos("reddit 05-10", "Double Coston vale dos tributos: se tributa solo ella",
+    "LaSonicSkins: «Double Coston also doesn't work with the double tribute»", () => {
+  const d = mesa({ mios:{ campo:["Double Coston","Mystical Elf","Sangan"], mano:["Dark Magician"] }, turno:6 });
+  const [dc, elfo, sangan] = d.zones[0][L.MZONE];
+  const q = { type: MT.SELECT_TRIBUTE, player:0, can_cancel:false, min:2, max:2,
+              selects:[{...ref(dc), release_param:2}, {...ref(elfo), release_param:1}, {...ref(sangan), release_param:1}] };
+  return { d, q, bien: r => r?.type === R.SELECT_TRIBUTE && r.indicies?.length === 1 && r.indicies[0] === 0 };
+});
+/* ══ GitHub y Reddit, Build 1.0 (04-10 a 18-10) ══ */
+pos("github 18-10", "con el campo rival vacío, los de defensa se levantan para el letal",
+    "Jekzie (Reddit): «keeps them in defense even if he can attack and win the duel because my field is completely empty»", () => {
+  const d = mesa({ mios:{ campo:[{carta:"Sangan", pos:P.DEF},{carta:"Mystic Tomato", pos:P.DEF}] }, lp:[8000, 2000], turno:7 });
+  return { d, q: preguntaIdle({ giros:d.zones[0][L.MZONE].filter(Boolean), bp:true }),
+           bien: r => r?.action === IA.SELECT_POS_CHANGE };
+});
+pos("github 18-10", "Forest antes de atacar, aunque su campo esté vacío",
+    "GitHub #5 (Weevil): «played a monster, attacked with it and then played a field spell that boosted it»", () => {
+  const d = mesa({ mios:{ campo:["Neo Bug"], mano:["Forest"] }, turno:4 });
+  const f = d.zones[0][L.HAND][0];
+  return { d, q: preguntaIdle({ activa:[f], colocaMT:[f], bp:true }), bien: r => r?.action === IA.SELECT_ACTIVATE };
+});
+pos("github 18-10", "…y Forest no, si sube más a los suyos que a los míos",
+    "control", () => {
+  const d = mesa({ mios:{ campo:["Neo Bug"], mano:["Forest"] },
+                   suyos:{ campo:["Gyaku-Gire Panda","Gazelle the King of Mythical Beasts"] }, turno:4 });
+  const f = d.zones[0][L.HAND][0];
+  return { d, q: preguntaIdle({ activa:[f], colocaMT:[f], bp:true }), bien: r => r?.action !== IA.SELECT_ACTIVATE };
+});
+pos("github 18-10", "Rescue Cat en el turno 1 sin Wicked Worm Beast ni tributo: no se usa",
+    "GitHub #17: «AI was playing rescue cat first turn and resolved to summon two Pandas»", () => {
+  const d = mesa({ mios:{ campo:["Rescue Cat"], mano:["Sakuretsu Armor"] }, turno:1,
+                   mazoMio:["Gyaku-Gire Panda","Gyaku-Gire Panda","Milus Radiant","Pot of Greed"] });
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.MZONE][0]], bp:false }), bien: r => r?.action !== IA.SELECT_ACTIVATE };
+});
+pos("github 18-10", "…con The Wicked Worm Beast en el mazo, sí",
+    "control: es el +1 de Cat Control", () => {
+  const d = mesa({ mios:{ campo:["Rescue Cat"], mano:["Sakuretsu Armor"] }, turno:1,
+                   mazoMio:["The Wicked Worm Beast","Gyaku-Gire Panda","Milus Radiant","Pot of Greed"] });
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.MZONE][0]], bp:false }), bien: r => r?.action === IA.SELECT_ACTIVATE };
+});
+pos("github 18-10", "sin nada que ataque, no se entra en la Battle Phase",
+    "GitHub #13: «the AI was going through all phases even though it had only set cards»", () => {
+  const d = mesa({ mios:{ campo:[{carta:"Sangan", pos:P.TAPADA}], mt:["Sakuretsu Armor"] },
+                   suyos:{ campo:["Breaker the Magical Warrior"] }, turno:6 });
+  return { d, q: preguntaIdle({ bp:true }), bien: r => r?.action === IA.TO_EP };
+});
+pos("github 18-10", "si el que ataca es mi monstruo robado, Book of Moon no tumba al que ya atacó",
+    "GitHub #15: «Book of Moon on the first monster which already attacked»", () => {
+  const d = mesa({ mios:{ mt:["Book of Moon"] },
+                   suyos:{ campo:["D.D. Warrior Lady", { carta:"Don Zaloog", dueño:0 }] },
+                   turnPlayer:1, fase:0x8, turno:3 });
+  const [lady, zaloog] = d.zones[1][L.MZONE];
+  lady.atacoTurno = 3; zaloog.atacoTurno = 3;
+  d.atacante = { uid:zaloog.uid, code:zaloog.code, controller:1 };
+  return { d, q: preguntaCadena([d.zones[0][L.SZONE][0]]), bien: r => r?.index == null };
+});
 /* ══════════════ ejecutar ══════════════ */
 const familias = new Map();
 const fallos = [];

@@ -133,6 +133,13 @@ export function vistaDe(duel, yo, db, names){
        público, se ve la línea en la mesa. Lo pregunta el adaptador al
        motor (`refrescarVinculos`). */
     vinculadoA: (oculta || bocaAbajo(c.position)) ? null : (c.vinculadoA ?? null),
+    /* ══ UNA CONTINUA QUE YA NO HACE NADA ══
+       Reddit, día 2: el bot usó Breaker para romper un Call of the
+       Haunted boca arriba que no tenía monstruo, «solo me liberó la
+       mesa». Un Call of the Haunted boca arriba sin
+       nada enganchado es una carta muerta: romperla no quita nada. Es
+       público (se ve que no tiene línea). */
+    muerta: continuaMuerta(c, oculta, names),
     /* Turnos en que entró, se volteó o atacó: todo público (ver duel.mjs). */
     entroTurno: c.entroTurno ?? null, volteoTurno: c.volteoTurno ?? null, atacoTurno: c.atacoTurno ?? null,
     puestaTurno: c.puestaTurno ?? null,
@@ -184,6 +191,12 @@ export function vistaDe(duel, yo, db, names){
        a la vista (Convulsion of Nature, Feather of the Phoenix). null si
        no se sabe. Ver `cimaMazo` en duel.mjs. */
     cimaMazo: duel.cimaMazo?.[yo] ?? null,
+    /* Lo que el rival ha RESUELTO este turno (público). Con Waboku ya
+       resuelta, este turno sus monstruos no mueren en batalla y él no
+       recibe daño de batalla: atacar no consigue nada. */
+    resueltasRivalTurno: (duel.resueltasTurno?.turno === duel.turnCount
+      ? duel.resueltasTurno.lista.filter(x => x.controller === rival).map(x => names?.[x.code]?.name ?? "")
+      : []),
   };
   /* ══ UN MONSTRUO ATADO NO ES UNA AMENAZA ══
      E, 03-10 (Reino, Weevil, T4): la IA giró su Insect Knight a defensa
@@ -202,6 +215,12 @@ export function vistaDe(duel, yo, db, names){
   return v;
 }
 
+const MUERE_SOLA = /^Call of the Haunted/;   // Premature Burial se destruye sola si pierde el monstruo
+export function continuaMuerta(c, oculta, names){
+  if(!c || oculta || bocaAbajo(c.position)) return false;
+  return MUERE_SOLA.test(names?.[c.code]?.name ?? "")
+         && (c.vinculadoA ?? null) == null && (c.equipadoA ?? null) == null;
+}
 /* Multiconjunto {code → cuántas quedan} del mazo propio. */
 function contarMazo(duel, yo){
   const quedan = new Map();

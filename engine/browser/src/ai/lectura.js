@@ -178,7 +178,7 @@ export function condicionCumplida(necesita, v, ayuda = {}){
   switch(necesita){
     case "ninguna":            return true;
     case "mazoPropio":         return (v.deckRestante ?? 0) > 0;
-    case "backrowRival":       return v.backrowRival.length > 0;
+    case "backrowRival":       return v.backrowRival.some(b => !b.muerta);
     case "monstruoRival":      return v.monstruosRival.length > 0;
     case "monstruoRivalUtil":  return !!ayuda.objetivoBueno;
     case "campoRivalGanador":  return v.monstruosRival.length > v.monstruos.length;
@@ -186,7 +186,7 @@ export function condicionCumplida(necesita, v, ayuda = {}){
       return v.cementerio.some(c => (c.datos?.type ?? 0) & 0x1);
     case "monstruoPropio":     return v.monstruos.length > 0;
     case "manoRival":          return (v.manoRival?.cuantas ?? 0) > 0;
-    case "algoDelRival":       return v.monstruosRival.length > 0 || v.backrowRival.length > 0;
+    case "algoDelRival":       return v.monstruosRival.length > 0 || v.backrowRival.some(b => !b.muerta);
     case "cadenaRival":        return !!ayuda.hayCadenaRival;
     default:                   return false;
   }
@@ -196,8 +196,36 @@ export function condicionCumplida(necesita, v, ayuda = {}){
    la juegues— cuando el texto no dice nada valorable o cuando lo que
    necesita no está en la mesa. Ese "0 por defecto" es el arreglo: antes
    era 1.2 y el bot jugaba a ciegas todo lo que no conocía. */
+/* ══ LOS CAMPOS QUE SUBEN UN TIPO (Forest, Wasteland, Mountain…) ══
+   GitHub #5 (Weevil): Neo Bug atacó y DESPUÉS jugó Forest. Su texto dice
+   «monsters on the field», así que la puerta de «puede apuntarme a mí»
+   lo dejaba a 0 en cuanto el campo rival estaba vacío, y con un monstruo
+   delante valía lo mismo que cualquier otra cosa. Lo que vale de verdad
+   es la cuenta: cuántos de los míos suben menos cuántos de los suyos. */
+const RAZAS_TEXTO = [["Beast-Warrior",0x8000],["Winged Beast",0x200],["Sea Serpent",0x40000],
+  ["Warrior",0x1],["Spellcaster",0x2],["Fairy",0x4],["Fiend",0x8],["Zombie",0x10],["Machine",0x20],
+  ["Aqua",0x40],["Pyro",0x80],["Rock",0x100],["Plant",0x400],["Insect",0x800],["Thunder",0x1000],
+  ["Dragon",0x2000],["Beast",0x4000],["Dinosaur",0x10000],["Fish",0x20000],["Reptile",0x80000]];
+export function razasQueSuben(texto){
+  const m = /^All ([^.]+?) monsters on the field gain \d+ ATK/i.exec(String(texto ?? ""));
+  if(!m) return 0;
+  let resto = m[1], bits = 0;
+  for(const [n, b] of RAZAS_TEXTO) if(resto.includes(n)){ bits |= b; resto = resto.split(n).join(" "); }
+  return bits;
+}
+function utilidadCampo(bits, v){
+  const sube = x => !x.bocaAbajo && x.datos && (Number(BigInt(x.datos.race ?? 0) & BigInt(bits)) !== 0);
+  const mios = v.monstruos.filter(sube).length, suyos = v.monstruosRival.filter(sube).length;
+  return { mios, suyos, neto: mios - suyos };
+}
 export function utilidadLeida(texto, datos, v, ayuda){
   const lee = leerCarta(texto, datos);
+  const bits = ((datos?.type ?? 0) & 0x80000) ? razasQueSuben(texto) : 0;
+  if(bits){
+    const { mios, suyos, neto } = utilidadCampo(bits, v);
+    if(neto <= 0) return { p:0, por:`sube ${mios} míos y ${suyos} suyos: no compensa`, lee };
+    return { p: 1.4 + 0.4 * neto, por:`sube ${mios} míos y ${suyos} suyos`, lee, campoSube:mios };
+  }
   if(!lee.hace) return { p:0, por:"no sé qué consigue esta carta aquí", lee };
   if(!condicionCumplida(lee.hace, v, ayuda))
     return { p:0, por:`no hay ${lee.hace}`, lee };
@@ -253,7 +281,7 @@ export function utilidadLeida(texto, datos, v, ayuda){
      no necesitan NADA en la mesa para conseguir lo suyo: quemar, ganar
      vida o contar turnos no apunta a nadie. */
   if(lee.hace !== "ninguna" && lee.puedeApuntarmeAMi
-     && !ayuda.objetivoBueno && !v.backrowRival.length)
+     && !ayuda.objetivoBueno && !v.backrowRival.some(b => !b.muerta))
     return { p:0, por:"apunta a cualquiera y solo estoy yo", lee };
 
   return { p: Math.max(0, vale - cuesta), por: nota, lee };

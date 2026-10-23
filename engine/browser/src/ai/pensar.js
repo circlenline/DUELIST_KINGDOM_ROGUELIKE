@@ -733,10 +733,22 @@ export function crearPensador({ X, crearLib, GoatDuel, crearCerebro, db, names, 
        Basic Insect para pegar directo y la simulación dijo «a batalla»;
        luego lo volteó en la Main Phase 2, sin batalla. Con el campo rival
        vacío, levantar un monstruo antes de la batalla es daño seguro. */
-    if(escoge?.cand?.index == null && escoge?.cand?.action === IA.TO_BP && heur
+    /* Y no solo frente a «a batalla»: también frente a «terminar».
+       Reddit (Jekzie, 14-10): «si tiene monstruos de poco ataque los deja
+       en defensa aunque pueda atacar y ganar, con mi campo vacío». Con
+       todo en defensa no hay golpe directo libre, así que la regla de
+       arriba no convertía «terminar» en «a batalla», y esta solo miraba
+       «a batalla»: el bot pasaba el turno con la partida ganada. */
+    if(escoge?.cand?.index == null && heur
        && heur.cand?.action === IA.SELECT_POS_CHANGE && plan[0]?.puntos > 0.8
        && !(duel.zones[1-yo]?.[LOCP.MZONE] ?? []).some(Boolean))
       escoge = heur;
+    /* Y sin nada que ataque, «a batalla» es lo mismo que terminar con dos
+       ventanas más de por medio (GitHub #13). */
+    if(escoge?.cand?.index == null && escoge?.cand?.action === IA.TO_BP && sinAtacantes && m.to_ep){
+      const fin = resultados.find(x => x.cand.index == null && x.cand.action === IA.TO_EP);
+      if(fin) escoge = fin;
+    }
     traza?.({ mundos:listaMundos, ms:cmp.ms, opciones: resultados.map(x => ({
       jugada: x.cand.index == null ? (x.cand.action === IA.TO_BP ? "a batalla" : "terminar") : `${x.cand.campo} ${nombreDe(x.cand.code)}`,
       media: +x.media.toFixed(2),

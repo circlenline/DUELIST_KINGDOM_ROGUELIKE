@@ -373,9 +373,18 @@ function frontHTML(code){
              <span class="fblv">${"★".repeat(Math.min(d.level||0,8))}</span>`
            :`<span class="fbstats">${attr}</span>`}
     </div>`;
+  /* ══ LA IMAGEN PUEDE LLEGAR TARDE ══
+     Reddit, día 2: «no puedo resolver ningún efecto de búsqueda sin que
+     pete» y un `Cannot read properties of null (reading 'classList')` en
+     el `onload` de una imagen. Era esto: una búsqueda abre el visor con
+     las 30 cartas del mazo, eliges una, el visor se cierra… y las
+     imágenes que seguían descargándose cargan DESPUÉS, ya sin padre. El
+     error tapaba la pantalla entera. Con red lenta (un móvil) pasaba casi
+     siempre; aquí, con la red local, nunca. `_repro-busqueda.mjs` lo
+     reproduce retrasando las imágenes. */
   const img = useImages
     ? `<img class="cimg" src="${IMG_BASE}${artCode(code)}.jpg" loading="lazy"
-         onload="this.parentNode.classList.add('hasimg')">`
+         onload="var p=this.parentNode;if(p&&p.classList)p.classList.add('hasimg')">`
     : "";
   return respaldo + img;
 }
@@ -446,6 +455,10 @@ function elFor(card){
   return el;
 }
 const isFD = p => !!(p & 0x0a);
+/* Opciones → «Cartas del rival»: derechas (por defecto, como siempre) o
+   del revés. E, 05-10: el giro, solo si se pide. */
+let GIRAR_RIVAL = false;
+try{ GIRAR_RIVAL = JSON.parse(localStorage.getItem("goatConfig") || "{}").girarRival === 1; }catch(e){}
 const isDef= p => !!(p & 0x0c);
 const TILT=11;
 
@@ -854,7 +867,15 @@ export function fitBoard(){
   const escR = parseFloat(getComputedStyle(document.documentElement)
                  .getPropertyValue("--mano-rival")) || 1;
   const asomaRival = CW*1.46*(0.06 + 0.10*escR) + 16;
-  const k=Math.min(1, availW/w, availH/(h + cuelga + asomaRival));
+  /* ══ EN UNA PANTALLA GRANDE, EL TABLERO CRECE Y SE CENTRA ══
+     Reddit, 05-10: «if we center the playground, it's on the top of the
+     screen». La escala tenía techo en 1: en un monitor de 1080 o más el
+     tablero se quedaba a tamaño de portátil pegado arriba, con media
+     pantalla vacía debajo. Ahora puede crecer (hasta ×1,6) y lo que sobre
+     de alto se reparte arriba y abajo. */
+  const ESCALA_MAX = 1.6;
+  const k=Math.min(ESCALA_MAX, availW/w, availH/(h + cuelga + asomaRival));
+  const sobra = Math.max(0, availH - (h + cuelga + asomaRival)*k);
 
   /* ══ LA BANDA MUERTA DE ARRIBA ══
      `scale()` escala desde el CENTRO del elemento (`transform-origin`
@@ -871,7 +892,7 @@ export function fitBoard(){
      necesita la mano del rival. No se toca `transform-origin` a
      propósito: eso movería también el eje del giro 3D y cambiaría la
      perspectiva del tablero. */
-  const subir = (1 - k) * h / 2 - asomaRival * k;
+  const subir = (1 - k) * h / 2 - asomaRival * k - sobra / 2;
   pl.style.transform =
     `translateY(${(-subir).toFixed(1)}px) scale(${k.toFixed(3)}) rotateX(var(--tilt))`;
   requestAnimationFrame(colocarFases);
@@ -985,6 +1006,7 @@ export function layoutAll(instant){
         const p2=zonePos(card.controller, ZKEY[loc], 0);
         const k = Math.min(desdeArriba, 3);
         x=p2.x - k*1.6; y=p2.y - k*2.2; tz=-k*0.5; z=10-k;
+        if(!mine && GIRAR_RIVAL && (loc===L.GRAVE || loc===L.REMOVED)) rz = 180;
       } else {
         const [zk, zi] = casillaDe(loc, idx);
         const p2=zonePos(card.controller, zk, zi);
@@ -992,8 +1014,14 @@ export function layoutAll(instant){
         // girar 90° solo monstruos en defensa; una M/T colocada llega con el
         // bit de defensa puesto y se veía tumbada sin motivo
         if(loc===L.MZONE && isDef(card.position)) rz=90;
+        /* ══ LAS CARTAS DEL RIVAL, DEL REVÉS ══
+           Reddit, 05-10: «every other simulator does it, so it is kinda
+           jarring to have every card right side up facing you». Si se
+           pide en Opciones, lo del rival en su campo se gira media vuelta. */
+        if(!mine && GIRAR_RIVAL && (loc===L.MZONE || loc===L.SZONE || loc===L.FZONE)) rz += 180;
         if(card.lift){ tz=40; }
       }
+      el.style.setProperty?.("--contragiro", (-rz) + "deg");
       el.style.zIndex=z;
       el.style.transform=`translate3d(${x}px,${y}px,${tz}px) rotateX(${rx}deg) rotateZ(${rz}deg) scale(${sc})`;
       /* La visibilidad depende de la ZONA, no de los bits de posición.
@@ -1087,6 +1115,14 @@ export function alHistorial(code, mia, tipo){
    pulsación larga sobre cualquier carta visible, y con un toque en el
    panel de detalle. Reportado en Reddit el primer día: "I cant read the
    cards". */
+/* Y por si el navegador saca su menú igual (Android lo hace con
+   `contextmenu`): sobre una carta, no. */
+try{
+  document.addEventListener("contextmenu", e => {
+    const t = e.target;
+    if(t?.closest?.(".card, #detail, #lupa, #zoneview, #historial")) e.preventDefault();
+  });
+}catch(e){}
 let ultimaCarta = null;
 export function verCarta(code){
   const d = DB.get(code); if(!d) return;
@@ -1133,22 +1169,22 @@ export function verUltimaCarta(){ if(ultimaCarta) verCarta(ultimaCarta); }
    bastante poco para que pasar el ratón siga sintiéndose instantáneo.
    ══════════════════════════════════════════════════════════════════ */
 let cartaFijada = null, temporizadorHover = null;
-export function fijarCarta(code){
+export function fijarCarta(code, uid = null){
   cartaFijada = code ?? null;
   if(temporizadorHover){ clearTimeout(temporizadorHover); temporizadorHover = null; }
-  if(code != null) pintarDetalle(code);
+  if(code != null) pintarDetalle(code, uid);
   const det = $("#detail");
   if(det?.classList) det.classList.toggle("fijada", cartaFijada != null);
 }
 export function soltarCarta(){ fijarCarta(null); }
 export function hayCartaFijada(){ return cartaFijada != null; }
 /* Lo que llaman los `pointerenter`: propone, no impone. */
-export function proponerDetalle(code){
+export function proponerDetalle(code, uid = null){
   if(cartaFijada != null) return;              // hay una fijada: manda ella
   if(temporizadorHover) clearTimeout(temporizadorHover);
   temporizadorHover = setTimeout(() => {
     temporizadorHover = null;
-    if(cartaFijada == null) pintarDetalle(code);
+    if(cartaFijada == null) pintarDetalle(code, uid);
   }, 90);
 }
 try{
@@ -1162,10 +1198,21 @@ try{
 }catch(e){}
 
 export function showDetail(code){ pintarDetalle(code); }
-function pintarDetalle(code){
+function pintarDetalle(code, uid = null){
   const d=DB.get(code); if(!d) return;
   ultimaCarta = code;
   const mon=!!(d.type & T_MONSTER);
+  /* ══ EL ATK/DEF DE VERDAD, TAMBIÉN EN EL PANEL ══
+     Reddit, 05-10: «modified atk and def values are only visible on the
+     playing field». Si la carta está boca arriba en el campo y el motor
+     dice otra cosa que la ficha (equipos, Thousand-Eyes, Snatch Steal…),
+     el panel enseña lo que vale ahora, con lo impreso al lado. */
+  const viva = uid != null ? DUEL?.cards?.get?.(uid) : null;
+  const real = viva && viva.location === L.MZONE && !isFD(viva.position) && viva.atkReal != null
+    && (viva.atkReal !== d.attack || viva.defReal !== d.defense) ? viva : null;
+  const stat = (nombre, ahora, base) => ahora == null || ahora === base
+    ? `<span>${nombre} ${base}</span>`
+    : `<span class="${ahora > base ? "sube" : "baja"}">${nombre} ${ahora} <small>(${base})</small></span>`;
   const attr = T(mon ? (ATTRCOL[d.attribute]?.[2] ?? "") : (d.type & T_SPELL ? "Carta Mágica":"Carta de Trampa"));
   const img = useImages ? `<img class="dimg" src="${IMG_BASE}${artCode(code)}.jpg"
       onerror="this.style.display='none'">` : "";
@@ -1180,7 +1227,7 @@ function pintarDetalle(code){
   det.innerHTML = `${img}
     <h3><span class="dlupa" aria-hidden="true">🔍</span>${nameOf(code)}</h3>
     <div class="dmeta">${mon ? `${attr} · ${T("Nivel "+d.level)}` : attr}</div>
-    ${mon?`<div class="dstats"><span>ATK ${d.attack}</span><span>DEF ${d.defense}</span></div>`:""}
+    ${mon?`<div class="dstats">${stat("ATK", real?.atkReal, d.attack)}${stat("DEF", real?.defReal, d.defense)}</div>`:""}
     <div class="dcta"><span class="soloRaton">${T("Pulsa aquí para verla en grande")}</span
       ><span class="soloTacto">${T("Toca aquí para verla en grande")}</span></div>
     <div class="dtext">${textOf(code).replace(/\r?\n/g,"<br>")}</div>`;
@@ -1232,26 +1279,29 @@ export function markUsable(uids){
     } else if(!on && insignia) insignia.remove();
   }
 }
+/* ══ LO QUE NO SE PUEDE LEER ══
+   Reddit, día 2: «I can see the opp hand cards if I click on them». El
+   pasar el ratón ya tapaba la mano del rival, pero el CLIC (fijar en el
+   panel) solo miraba si la carta estaba boca abajo: la mano del bot va
+   boca arriba para el motor, así que un toque la enseñaba entera. Ahora
+   los tres gestos (pasar, fijar y pulsación larga) preguntan aquí, y
+   `check-frontera` vigila que no vuelva. Oculta = ni enseñada por un
+   efecto ni mía, y además boca abajo, en la mano, en el mazo o en el
+   Extra Deck: la misma regla que decide si se pinta la cara. */
+function cartaOculta(card){ return !card || ocultaParaMi(card); }
 function wire(el, card){
   el.addEventListener("pointerenter",()=>{
-    const visible = revelados.has(card.uid);      // enseñada por un efecto
-    const hidden = !visible && isFD(card.position) && card.controller!==ME;
-    const inDeck = !visible && (card.location===L.DECK
-                 || (card.location===L.EXTRA && card.controller!==ME)
-                 || (card.location===L.HAND && card.controller!==ME));
-    if(hidden||inDeck) return;
-    proponerDetalle(card.code);
+    if(cartaOculta(card)) return;
+    proponerDetalle(card.code, card.uid);
   });
   /* CLIC = FIJAR. Va en `pointerup` para no pelearse con el arrastre:
      si has arrastrado, no era un clic. */
   el.addEventListener("pointerup", e => {
-    const visible = revelados.has(card.uid);
-    const hidden = !visible && isFD(card.position) && card.controller!==ME;
-    if(hidden) return;
+    if(cartaOculta(card)) return;
     if(arrastrando) return;
     /* Volver a pulsar la misma carta la suelta: es el gesto que espera
        cualquiera de un "pin". */
-    if(cartaFijada === card.code) soltarCarta(); else fijarCarta(card.code);
+    if(cartaFijada === card.code) soltarCarta(); else fijarCarta(card.code, card.uid);
   });
   /* Pulsación larga = ver la carta grande. Es el gesto que espera
      cualquiera en un móvil, y en escritorio no molesta porque el ratón
@@ -1259,11 +1309,7 @@ function wire(el, card){
   let temporizadorLupa = null, x0 = 0, y0 = 0;
   const cancelarLupa = ()=>{ if(temporizadorLupa){ clearTimeout(temporizadorLupa); temporizadorLupa=null; } };
   el.addEventListener("pointerdown",e=>{
-    const visible = revelados.has(card.uid)
-      || !(isFD(card.position) && card.controller!==ME)
-         && !(card.location===L.HAND && card.controller!==ME)
-         && card.location!==L.DECK;
-    if(visible){
+    if(!cartaOculta(card)){
       x0 = e.clientX ?? 0; y0 = e.clientY ?? 0;
       cancelarLupa();
       /* Con el dedo la pulsación larga es LA forma de leer una carta, así
@@ -1622,12 +1668,19 @@ export function banner(t,color){
   const b=$("#banner"); b.textContent=T(t); b.style.color=color||"var(--gold)";
   b.classList.remove("show"); void b.offsetWidth; b.classList.add("show");
 }
-export function setLP(player,v){
+export function setLP(player,v,deSalida=false){
   const isMe=player===ME;
   const el=$(isMe?"#lpMeVal":"#lpOppVal"), box=$(isMe?"#lpMe":"#lpOpp");
+  /* Cada cambio corta la animación anterior: si no, la cuenta que seguía
+     en marcha (la de montar la vista, hacia 8000) pisaba los LP de salida
+     de Pegasus en el fotograma siguiente. */
+  const turno=(el._animLP=(el._animLP||0)+1);
+  /* Los LP con los que empieza el duelo se ponen sin animar ni «herida». */
+  if(deSalida){ el.textContent=String(v); return; }
   const from=+el.textContent||0, t0=performance.now();
   box.classList.add("hurt"); setTimeout(()=>box.classList.remove("hurt"),700);
-  (function step(t){ const k=Math.min(1,(t-t0)/450);
+  (function step(t){ if(el._animLP!==turno) return;
+    const k=Math.min(1,(t-t0)/450);
     el.textContent=Math.round(from+(v-from)*(1-Math.pow(1-k,3)));
     if(k<1) requestAnimationFrame(step); })(t0);
 }

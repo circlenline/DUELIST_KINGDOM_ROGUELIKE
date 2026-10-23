@@ -102,6 +102,8 @@ body::after{content:"";position:fixed;inset:0;pointer-events:none;
 #detail h3{font-size:19px;line-height:1.25;color:var(--gold);margin-bottom:8px}
 #detail .dmeta{font-size:13px;color:#8aa4c8;letter-spacing:.06em;margin-bottom:10px;text-transform:uppercase}
 #detail .dstats{display:flex;gap:14px;margin-bottom:14px;font-size:16px;font-weight:700;color:#e6eefc}
+#detail .dstats .sube{color:#8ff0a4} #detail .dstats .baja{color:#ff9d9d}
+#detail .dstats small{font-size:.72em;opacity:.7;font-weight:600}
 #detail .dstats span{background:rgba(78,168,255,.12);border:1px solid var(--edge);
   padding:5px 11px;border-radius:3px}
 #detail .dtext{font-size:14.5px;line-height:1.65;color:#c3d2e8;white-space:pre-wrap}
@@ -1692,10 +1694,21 @@ body.sinCarril #pestana{display:block}
 .rCartas.rPrecio{opacity:.85;max-height:26vh}
 #reino .rCartas.rPrecio .rCarta{width:clamp(46px,5vmin,64px);border-color:rgba(255,120,90,.4)}
 .rReceta .rMeta{color:#8c8877;font-size:11px}
-.buff{position:absolute;left:2px;right:2px;bottom:2px;z-index:6;
-  font:700 10px/1.5 system-ui,sans-serif;text-align:center;border-radius:2px;
+/* ATK/DEF de verdad sobre la carta. Reddit, 05-10: «the small font size
+   combined with defense position makes the values even harder to read».
+   Más grande, y siempre derecha: se contragira lo que gire la carta (en
+   defensa, o del rival), así que se lee igual en cualquier posición. */
+.buff{position:absolute;left:50%;bottom:3px;z-index:6;white-space:nowrap;padding:0 4px;
+  transform:translateX(-50%) rotate(var(--contragiro,0deg));
+  font:800 clamp(11px,calc(var(--cw,116px)*.13),15px)/1.45 system-ui,sans-serif;text-align:center;border-radius:3px;
   background:rgba(8,6,4,.88);border:1px solid rgba(255,255,255,.22);
   color:#ffe9b0;pointer-events:none;text-shadow:0 1px 2px #000}
+/* Reddit, 05-10: «if I hold my finger slightly too long, it opens the
+   browser window to download/save the card image». La pulsación larga es
+   NUESTRA (abre la lupa): el menú del navegador sobre las imágenes de
+   carta, fuera. */
+.card, .card img, #detail img, #lupa img, #zoneview img, #historial img, .hcarta{
+  -webkit-touch-callout:none;-webkit-user-select:none;user-select:none;-webkit-user-drag:none}
 .buff.sube{color:#8ff0a4;border-color:rgba(143,240,164,.5)}
 .buff.baja{color:#ff9d9d;border-color:rgba(255,157,157,.5)}
 .face.back{border:none;background:#120a06;padding:0}
@@ -1911,6 +1924,7 @@ html,body{overflow-x:hidden}
   color:#cfe0f7;font-size:13px;font-family:inherit;cursor:pointer}
 #menu select:focus{outline:none;border-color:var(--gold)}
 #menu .mnota{font-size:11.5px;color:#7d94b5;line-height:1.6;margin-top:8px}
+#menu .mlink{background:none;border:0;padding:0;font:inherit;color:#d8b45c;text-decoration:underline;cursor:pointer}
 #menu .mbig{width:100%;margin-top:12px;padding:15px;font-size:14px;font-weight:700;
   letter-spacing:.2em;text-transform:uppercase;cursor:pointer;color:#080c16;
   background:linear-gradient(180deg,var(--gold),#a8842f);border:none;transition:.16s}
@@ -2731,6 +2745,40 @@ html,body{overflow-x:hidden}
 #confirm .cfbtns .cfsi{background:linear-gradient(180deg,#b2452f,#7a2a1a);
   border-color:rgba(255,150,120,.5);color:#fff}
 #confirm .cfbtns .cfsi:hover{filter:brightness(1.15);box-shadow:0 0 26px rgba(255,120,90,.6)}
+/* ══ EN EL MÓVIL, UN SUELO PARA EL TAMAÑO DE LETRA ══
+   Reddit, 05-10: «the text is very small and hard to read on my Android
+   device». Cada regla de móvil apretaba su texto por separado para que
+   cupiera el tablero, y la suma dejaba paneles a 7–10 px. Va AL FINAL a
+   propósito: aquí manda la legibilidad. El tablero no cambia de tamaño;
+   lo que crece son los textos que se LEEN (preguntas, ficha, botones). */
+@media (pointer:coarse){
+  #prompt .ptitle{font-size:13px;letter-spacing:.04em}
+  #prompt .pnote{font-size:12px;line-height:1.35}
+  #prompt .pfase{font-size:10px}
+  #prompt .popts .btn{font-size:13px;letter-spacing:.02em}
+  #controles button{font-size:13px}
+  #detail h3{font-size:13.5px}
+  #detail .dstats{font-size:12.5px}
+  #detail .dcta{font-size:10.5px}
+  #detail .empty{font-size:11px;max-height:44px}
+  #side{max-height:76px}
+  .btn{font-size:11.5px}
+  #topbar .btn{font-size:11px}
+  .ph{font-size:9px}
+  .ph.conSub::after{font-size:8px}
+  .lp .who{font-size:10px}
+  .lp .val{font-size:17px}
+  .toast{font-size:13px}
+  #historial .hnom{font-size:9px}
+  #zoneview .zvtexto{font-size:13px}
+  #zoneview .zvmeta{font-size:11.5px}
+  #lupa .luCuerpo{font-size:14px;line-height:1.5}
+  #menu .mlab{font-size:11px}
+  #menu .mnota{font-size:12px}
+  #menu .mrej button{font-size:12px}
+  #menu select{font-size:13px}
+  #fin .finBtn{font-size:12px}
+}
 </style></head>
 <body>
 
@@ -2798,6 +2846,9 @@ html,body{overflow-x:hidden}
       <label class="mlab">Tu mazo</label>
       <div class="galeria" id="mGaleria"></div>
       <div class="mnota" id="mMazoInfo"></div>
+      <div class="mnota mimport"><span>Tus mazos del Deck Builder salen al final, con «(tuyo)».</span>
+        <span>¿No está?</span> <button class="mlink" id="mImportarYdk">Importar .ydk</button>
+        <input type="file" id="mYdkFichero" accept=".ydk,.txt,text/plain" hidden></div>
       <label class="mlab">Mazo del rival</label>
       <select id="mMazoIA"></select>
       <button class="mbig" id="mJugar">Empezar duelo</button>
@@ -2846,6 +2897,11 @@ html,body{overflow-x:hidden}
         <button data-v="auto">Automáticas</button>
         <button data-v="always">Preguntar siempre</button>
         <button data-v="nunca">No activar nada</button>
+      </div>
+      <label class="mlab">Cartas del rival</label>
+      <div class="mrej" id="mGirar">
+        <button data-v="0">Mirando hacia ti</button>
+        <button data-v="1">Mirando hacia el rival</button>
       </div>
       <p class="mnota">Con "automáticas" solo se te pregunta cuando hay algo real
         a lo que responder. En el turno del rival siempre se pregunta.</p>
@@ -2984,13 +3040,31 @@ html,body{overflow-x:hidden}
       try{ navigator.clipboard.writeText(detalle); btn.textContent = "Copied"; }catch(e){}
     };
   }
+  /* ══ UN ERROR SUELTO NO PUEDE TAPAR LA PARTIDA ══
+     Esta pantalla es para el ARRANQUE: si algo falla antes de que el
+     juego exista, hay que poder leerlo. Pero seguía escuchando durante
+     toda la partida, y cualquier error suelto —una imagen que carga
+     tarde, un temporizador de una pantalla ya cerrada— la sacaba encima
+     del tablero y el duelo «petaba» sin haberse roto nada (Reddit, día
+     2). Una vez arrancado, el error se apunta en el log de la partida
+     (sale en el Reportar) y en la consola, y se sigue jugando. Los fallos
+     de verdad del bucle del duelo tienen su propio panel recuperable. */
+  function arrancado(){
+    return window.__HITOS__.some(function(h){ return h.indexOf("arranque completo") === 0; });
+  }
+  function tardio(msg, err){
+    try{ console.error(err || msg); }catch(_){}
+    try{ if(window.__errorTardio__) window.__errorTardio__(String(msg || ""), err); }catch(_){}
+  }
   window.addEventListener("error", function(e){
+    if(arrancado()) return tardio(e.message, e.error);
     mostrar("Error",
       (e.message||"") + "\n" + (e.filename||"") + ":" + (e.lineno||"") +
       "\n\n" + ((e.error && e.error.stack) || ""));
   });
   window.addEventListener("unhandledrejection", function(e){
     var r = e.reason || {};
+    if(arrancado()) return tardio(r.message || String(r), r);
     mostrar("Error", (r.message || String(r)) + "\n\n" + (r.stack || ""));
   });
 })();
@@ -3002,6 +3076,8 @@ html,body{overflow-x:hidden}
 /*__MODULES__*/
 const CARDS = /*__CARDS__*/;
 const NAMES = /*__NAMES__*/;
+/* Los textos de opción de cada carta (str1…str16): ver export-cadenas.mjs. */
+globalThis.CADENAS_CARTA = /*__CADENAS__*/;
 const DECK  = /*__DECK__*/;
 const MAZOS = /*__MAZOS__*/;
 /* ══ MAZOS PROPIOS PRECARGADOS ══
@@ -3198,11 +3274,47 @@ function listaMazos(){
   return l;
 }
 const buscaMazo = id => listaMazos().find(m=>m.id===id) ?? null;
+/* ══ IMPORTAR UN .YDK SIN PASAR POR EL DECK BUILDER ══
+   Reddit, día 2: «hice un mazo en el deck builder, dice que es válido,
+   sale en "My decks"… y no se puede elegir en ningún modo». En Chrome no
+   se reproduce (mismo origen, mismo localStorage), pero hay navegadores
+   donde dos archivos abiertos con doble clic NO comparten lo guardado, y
+   pestañas que vuelven del historial con la lista vieja. Así que el
+   juego también sabe leer un .ydk directamente (el que exporta el deck
+   builder o cualquier otro), y se guarda como mazo tuyo aquí mismo.
+   Los códigos alternativos se pasan al del pool con `alPool`. */
+function leerYdk(texto){
+  const r = { main:[], extra:[], side:[] }; let zona = "main", raros = 0;
+  for(const linea of String(texto).split(/\r?\n/)){
+    const t = linea.trim();
+    if(/^#main/i.test(t)){ zona = "main"; continue; }
+    if(/^#extra/i.test(t)){ zona = "extra"; continue; }
+    if(/^!side/i.test(t)){ zona = "side"; continue; }
+    if(!/^\d+$/.test(t)) continue;
+    const c = NAMES[+t] ? alPool(+t) : null;
+    if(c && POOL.has(c)) r[zona].push(c); else raros++;
+  }
+  return { ...r, raros };
+}
+function guardarMazoPropio(nombre, mazo){
+  const mios = misMazos();
+  mios.push({ nombre, main:mazo.main, extra:mazo.extra, side:mazo.side, fecha:Date.now() });
+  localStorage.setItem("goatDecks", JSON.stringify(mios));
+  return "u" + (mios.length - 1);
+}
 const PANTALLAS={home:"pHome",jugar:"pJugar",opciones:"pOpciones",bots:"pBots",torneo:"pTorneo",sala:"pSala"};
 /* Progreso del modo bots: {idMazo:{nivel:true}} */
 function progreso(){
   try{ return JSON.parse(localStorage.getItem("goatProgreso")||"{}"); }catch(e){ return {}; }
 }
+/* Si los mazos cambian en otra pestaña (el deck builder abierto aparte)
+   o la página vuelve del historial con el botón Atrás, la lista del menú
+   se queda vieja hasta recargar. Se repinta, solo si se ve el menú. */
+function repintarSiMenu(){
+  try{ if(document.getElementById("menu")?.style.display !== "none") pintarMenu(); }catch(e){}
+}
+window.addEventListener("storage", e => { if(!e.key || e.key === "goatDecks") repintarSiMenu(); });
+window.addEventListener("pageshow", e => { if(e.persisted) repintarSiMenu(); });
 function irA(p){
   for(const k in PANTALLAS) document.getElementById(PANTALLAS[k]).hidden = (k!==p);
 }
@@ -3324,6 +3436,8 @@ function pintarMenu(){
   pintarAvatares();
   pintarBots();
   grupo("mCadenas", null, "cadenas");
+  if(cfg.girarRival == null) cfg.girarRival = 0;
+  grupo("mGirar", null, "girarRival");
   grupo("mIdioma", null, "idioma", ()=>location.reload());
   grupo("mTiempo", null, "tiempo");
   /* La casilla del contador no pasa por `cfg`: su preferencia vive en el
@@ -3379,6 +3493,27 @@ function pintarMenu(){
           if(!confirm(__T_("¿Cargar la copia? Sustituye tus mazos, tu progreso y tus torneos de este navegador por los del archivo."))){ f.value = ""; return; }
           try{ for(const k of claves) localStorage.setItem(k, datos[k]); }catch(e){ alert(__T_("No se ha podido cargar la copia: el navegador no deja guardar.")); return; }
           location.reload();
+        };
+        lector.readAsText(archivo);
+      };
+    }
+  }
+  {
+    const b = document.getElementById("mImportarYdk"), f = document.getElementById("mYdkFichero");
+    if(b && f){
+      b.onclick = () => f.click?.();
+      f.onchange = () => {
+        const archivo = f.files?.[0]; if(!archivo) return;
+        const lector = new FileReader();
+        lector.onload = () => {
+          const m = leerYdk(lector.result); f.value = "";
+          if(m.main.length < 40){ alert(__T_("Ese archivo no es un mazo válido: el main deck tiene que tener al menos 40 cartas.")
+                                        + (m.raros ? ` (${m.raros} ${__T_("cartas no son del formato Goat")})` : "")); return; }
+          const nombre = String(archivo.name || "Mazo").replace(/\.(ydk|txt)$/i, "").slice(0, 40);
+          try{ cfg.mazo = guardarMazoPropio(nombre, m); guardarCfg(); }
+          catch(e){ alert(__T_("No se ha podido cargar la copia: el navegador no deja guardar.")); return; }
+          pintarMenu();
+          if(m.raros) alert(`${m.raros} ${__T_("cartas no son del formato Goat y se han quitado.")}`);
         };
         lector.readAsText(archivo);
       };

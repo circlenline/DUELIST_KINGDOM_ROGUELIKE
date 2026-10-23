@@ -58,6 +58,27 @@ export class GoatDuel {
     this.cimaMazo = { 0:null, 1:null };
     this.finished = false;
   }
+  /* ══ LA SEMILLA DEL MOTOR, MEZCLADA (reporte de Reddit, 10-10) ══
+     «Con Fairy Box siempre sale cruz». Era verdad: 60 de 60. El motor usa
+     xoshiro256**, y se le daban cuatro palabras casi vacías —[SEED, 7, 13,
+     29], con SEED de cinco cifras—. Con un estado así el generador tarda en
+     mezclar y el bit bajo, que es justo el que decide una moneda, salía
+     siempre igual. Con la semilla pasada por splitmix64 (lo que recomienda
+     el autor de xoshiro) sale 33 cara / 27 cruz en las mismas 60 pruebas.
+     `check-moneda.mjs` lo vigila. Los logs nuevos llevan «rng: v2» para
+     que `repetir-log` sepa qué semilla rehacer. */
+  static semillaMotor(n){
+    const M = 0xFFFFFFFFFFFFFFFFn;
+    let x = BigInt(n) & M; const out = [];
+    for(let i = 0; i < 4; i++){
+      x = (x + 0x9E3779B97F4A7C15n) & M;
+      let z = x;
+      z = ((z ^ (z >> 30n)) * 0xBF58476D1CE4E5B9n) & M;
+      z = ((z ^ (z >> 27n)) * 0x94D049BB133111EBn) & M;
+      out.push(z ^ (z >> 31n));
+    }
+    return out;
+  }
   emptySide(){
     /* La zona de M/T tiene SEIS huecos, no cinco: con las reglas de 2005 el
        Field Spell no vive en FZONE, vive en el puesto 5 de la propia zona de
@@ -590,9 +611,26 @@ export class GoatDuel {
          `elegirCartas` leía la búsqueda propia como un coste impuesto por
          el rival. El eslabón que acaba de resolverse ya no está en la
          cadena: lo de arriba es lo que se resuelve ahora. */
-      case T.CHAIN_SOLVED:
+      /* ══ LO QUE YA SE HA RESUELTO ESTE TURNO ══
+         Reddit, día 2: Waboku resuelta (nada de daño ni destrucción por
+         batalla este turno) y el bot atacó igual con todo, sin ganar nada
+         y arriesgándose a otra trampa. Para saberlo hace falta recordar
+         qué eslabones se RESOLVIERON —no solo se activaron: uno negado no
+         protege— en el turno. Es público: todo el mundo lo ha visto. */
+      case T.CHAIN_NEGATED: case T.CHAIN_DISABLED:
+        if(m.chain_size != null) (this.negadosCadena ??= new Set()).add(m.chain_size);
+        break;
+      case T.CHAIN_SOLVED: {
+        const k = m.chain_size;
+        const eslabon = k != null ? this.cadena[k - 1] : null;
+        if(eslabon && !this.negadosCadena?.has(k)){
+          if(this.resueltasTurno?.turno !== this.turnCount) this.resueltasTurno = { turno:this.turnCount, lista:[] };
+          this.resueltasTurno.lista.push({ code:eslabon.code, controller:eslabon.controller });
+        }
+        this.negadosCadena?.delete(k);
         if(m.chain_size != null) this.cadena.length = Math.max(0, Math.min(this.cadena.length, m.chain_size - 1));
         this.emit("chainSolved",{ link:m.chain_size }); break;
+      }
       /* ══════════════════════════════════════════════════════════════
          A QUIÉN APUNTA LA CADENA — otro mensaje que se tiraba
 
@@ -617,7 +655,7 @@ export class GoatDuel {
         this.emit("target",{ uids:[...this.objetivosCadena] });
         break;
       }
-      case T.CHAIN_END:    this.cadena.length=0; this.objetivosCadena.clear();
+      case T.CHAIN_END:    this.cadena.length=0; this.objetivosCadena.clear(); this.negadosCadena?.clear();
                            this.emit("chainEnd",{}); break;
       case T.ATTACK: {
         const a = this.at(m.card.controller, m.card.location, m.card.sequence);
@@ -739,6 +777,17 @@ export class GoatDuel {
          Mind Crush, mirar la cima del deck…). Antes se ignoraba y por eso la
          mano del rival seguía tapada mientras te pedía elegir de una lista.
          Al revelarse dejan de ser secretas: se les fija el código. */
+      /* ══ LAS DE ARRIBA DEL MAZO, A LA VISTA (GitHub #2, Reddit) ══
+         Cyber Jar enseña las cinco de arriba de cada mazo antes de invocar
+         y llevarse a la mano el resto. Lo dice con CONFIRM_DECKTOP, que
+         nadie escuchaba: el rival se llevaba cartas a la mano sin que
+         vieras cuáles, y tú elegías posición sin saber de qué monstruo.
+         Es información pública: se manda con los códigos. */
+      case T.CONFIRM_DECKTOP: {
+        const codes = (m.cards ?? []).map(c => c.code).filter(Boolean);
+        if(codes.length) this.emit("revelarMazo", { player:m.player, codes });
+        break;
+      }
       case T.CONFIRM_CARDS: {
         const vistas=[];
         for(const c of (m.cards ?? [])){

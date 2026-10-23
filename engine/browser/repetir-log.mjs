@@ -91,7 +91,8 @@ const deck = lado => lado === ME ? barajados.tu : barajados.rival;
 const lib = await X.default({ sync:true });
 const duel = new GoatDuel({ lib, X, cardDb:db, scriptReader, onEvent: () => {} });
 await duel.create({ deck0:deck(0), deck1:deck(1), extra0:extraDe(0), extra1:extraDe(1),
-                    seed:[BigInt(SEED), 7n, 13n, 29n] });
+                    /* «rng: v2»: semilla mezclada (desde la 1.2). Sin la línea, un log viejo. */
+                    seed: /^rng: v2/m.test(cuerpo) ? GoatDuel.semillaMotor(SEED) : [BigInt(SEED), 7n, 13n, 29n] });
 let trazar = false;
 const cerebro = crearCerebro({ X, duel, db, names, nivel:"experto", yo:IAL,
   log: d => { if(trazar) console.log("   ·", d.msg, d.valor != null ? JSON.stringify(d.valor) : "", d.puntos != null ? `(${d.puntos})` : ""); } });

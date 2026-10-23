@@ -18,6 +18,9 @@ export function valorCarta(c){
      un Sangan (~1,25). Antes el bot LEÍA el código de la tapada y elegía
      objetivo con él; al quitarle esa trampa hace falta este previo, o
      prefiere romper una continua boca arriba de 1,0 antes que la tapada. */
+  /* Un Call of the Haunted boca arriba sin monstruo no hace nada:
+     romperlo no quita nada (ver `continuaMuerta` en view.js). */
+  if(c?.muerta) return 0.05;
   if(!c?.nombre) return c?.tapadaDesconocida === "mt" ? 1.3
                       : c?.tapadaDesconocida === "monstruo" ? 1.25 : 1.0;
   return conocer(c.nombre, c.datos).valor ?? 1.0;

@@ -143,7 +143,8 @@ function zip(entradas){
   fin.writeUInt32LE(tam, 12); fin.writeUInt32LE(offset, 16);
   return Buffer.concat([...partes, ...central, fin]);
 }
-const leeme = `DUELIST KINGDOM · GOAT FORMAT SIMULATOR · Build 1.0
+const VERSION = (fs.readFileSync(path.join(ENGINE, "browser/build-html.mjs"), "utf-8").match(/const VERSION = "([^"]+)"/) ?? [])[1] ?? "?";
+const leeme = `DUELIST KINGDOM · GOAT FORMAT SIMULATOR · Build ${VERSION}
 =====================================================
 
 Open goat-simulador.html by double-clicking it. That's the whole

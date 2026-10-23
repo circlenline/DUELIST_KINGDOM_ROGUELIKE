@@ -9,11 +9,59 @@
 A Yu-Gi-Oh! **GOAT Format** (April 2005) simulator that runs in a web browser, on PC
 and on phones. It plays against you with a bot built to play like a GOAT player, and
 it has a Duelist Kingdom roguelike, a Swiss tournament with top cut, and rooms to play
-against your friends. Free, no install, no account. **Build 1.0.**
+against your friends. Free, no install, no account. **Build 1.2.**
 
 [![Watch the trailer](docs/img/trailer-readme.jpg)](https://circlenline.github.io/DUELIST_KINGDOM_ROGUELIKE/#trailer)
 
 ---
+
+## Build 1.2 — fixes from your GitHub issues
+
+Thanks for every issue and comment. Most of the "the game crashed" reports from Build 1.0
+(Gravekeeper's Spy, Tribe-Infecting Virus, Tsukuyomi, Don Zaloog, searches) were the same bug,
+fixed in 1.1 below. This build adds:
+
+- **Coin tosses were rigged by accident.** Fairy Box (and every coin toss) came out Tails every
+  time because of how the rules engine was seeded. Now it's a real 50/50, and the AI no longer
+  always calls Heads.
+- **Pegasus "gaining" 1000 LP with Toon World.** He starts with 10,000 LP; the screen showed 8,000
+  until the first change. The starting LP are now shown correctly.
+- **Cyber Jar** now shows the cards revealed from both decks, and every "which position?" question
+  (Cyber Jar, Reasoning, Monster Gate, Dimension Fusion…) names the monster.
+- **Fusilier Dragon** shows "With Tributes / Normal Summon without Tribute" instead of "Option 1/2".
+- **A folded side panel no longer hides questions** ("activate the effect?", "respond?"), which made
+  the game look stuck in the Battle Step while each window timed out.
+- **During your own attack** every response window is offered (e.g. Limiter Removal in the Damage
+  Step after another chain).
+- **AI:** raises its defense-position monsters to attack for lethal on an empty board, plays Forest
+  and other type-boosting fields before attacking, doesn't Rescue Cat for two Pandas with nothing to
+  do with them, doesn't waste Book of Moon on a monster that already attacked, and doesn't walk into
+  an empty Battle Phase with only set cards.
+
+## Build 1.1 — fixes from the first week of feedback
+
+Thanks to everyone who played and reported on Reddit. This build fixes:
+
+- **The opponent's hand could be read** by tapping it (the card showed up in the info panel). Fixed.
+- **Search effects "crashing"** (Mystic Tomato, Manju…): a card image loading late after the
+  card list closed was taking over the whole screen with an error. Fixed, and a stray error can
+  no longer cover the game.
+- **Berserk Gorilla froze the duel** when it had to attack into something bigger. The AI now
+  attacks when the rules say it must.
+- **Double Coston** now counts as two tributes for a DARK monster.
+- **Vampire Lord** (and other cards that ask you to pick an option) show the real choices
+  (Monster / Spell / Trap) instead of "Option 1-3".
+- **AI:** no more Breaker on a face-up Call of the Haunted that isn't holding anything, and no
+  more attacking with everything after your Waboku has resolved.
+- **Opponent's cards can face them instead of you**, like at a real table (Options → Opponent's
+  cards → Looking at the opponent).
+- **Changed ATK/DEF are easier to read**: bigger, always upright (also in defense position), and
+  shown in the card info panel too.
+- **Bigger text on phones**, and long-pressing a card no longer opens the browser's
+  "save image" menu.
+- **Big screens:** the board is centered vertically instead of stuck at the top.
+- **Your decks:** if a deck from the Deck Builder doesn't show up, you can now import its `.ydk`
+  directly in Free Duel ("Not there? Import .ydk").
 
 ## What's new
 

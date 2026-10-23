@@ -12,7 +12,7 @@
      · Thousand-Eyes Restrict sin objetivo bueno no compensa.
      · Scapegoat en tu turno te bloquea la invocación.
    ══════════════════════════════════════════════════════════════════ */
-import { vistaDe, recordadaEnSitio, mensajeLegal } from "./view.js";
+import { vistaDe, recordadaEnSitio, mensajeLegal, continuaMuerta } from "./view.js";
 import { atk, def, poder, valorCarta, rolDe, infoDe, evaluar, ventaja,
          apuestaContraTapada, atkEnCombate,
          ganaCombate, muereAtacando, pegaMasFuerte, sobrevive,
@@ -270,6 +270,7 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
              uid: enCampo ? (duel.at(l.controller, l.location, l.sequence)?.uid ?? null) : null,
              tapadaDesconocida: (oculta && enCampo && !code) ? (l.location===8 ? "mt" : "monstruo") : null,
              atkReal: real?.atkReal ?? null, defReal: real?.defReal ?? null,
+             muerta: continuaMuerta(real, oculta, names),
              defensa:false, bocaAbajo:false };
   };
 
@@ -1773,6 +1774,23 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
           const quedan = quedanEnMazo(v, nom), hacenFalta = inf.necesitaCopias ?? 1;
           p = quedan >= hacenFalta ? 4.2 : 0.02;
           if(quedan < hacenFalta) vetado = true;
+          /* ══ RESCUE CAT CON UN PLAN, O NO ══
+             GitHub #17 (Cat Control, T1): sacó dos Gyaku-Gire Panda en el
+             primer turno, sin batalla, y los dos murieron en la End Phase:
+             tres cartas por nada. Sale a cuenta con The Wicked Worm Beast
+             (vuelve a la mano en vez de morir), con batalla por delante o
+             con algo que tributar (Metamorphosis, un monstruo grande). */
+          if(exp("gatoConPlan") && nom === "Rescue Cat" && l.location === 4){
+            const gusano = quedanEnMazo(v, "The Wicked Worm Beast") > 0;
+            const batalla = !!m.to_bp;
+            const tributo = v.mano.some(h => canon(h.nombre) === "Metamorphosis"
+                                          || ((Number(h.datos?.type) || 0) & 0x1) && (Number(h.datos?.level) || 0) >= 5);
+            if(!gusano && !batalla && !tributo){
+              p = 0.05; vetado = true;
+              por += " (sin Wicked Worm Beast, sin batalla y sin tributo: dos bestias que mueren en la End Phase)";
+              break;
+            }
+          }
           /* E, 19-09 (Chaos Turbo, p1): «¿por qué descarta el segundo
              Thunder Dragon? mejor dejarlo en mano para descartar con otra
              cosa». Con UNA copia en el mazo, activarlo es cambiar una carta
@@ -2062,6 +2080,11 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
                                duel.cadena[duel.cadena.length-1].controller !== yo),
           });
           p = leido.p; por += ` (${leido.por})`;
+          /* Un campo que sube a mis atacantes va ANTES de la batalla: si
+             se juega después, el daño de este turno ya se ha perdido. La
+             simulación lo veía igual (lo jugaba en la Main Phase 2) y lo
+             dejaba para luego: es una regla, no una opinión. */
+          if(leido.campoSube && m.to_bp && v.turnoMio){ p = Math.max(p, 2.0); seguro(IA.SELECT_ACTIVATE, i); por += " (antes de la batalla)"; }
           if(!p) vetado = true;
           break;
         }
@@ -2616,12 +2639,35 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
       return { type:R.SELECT_IDLECMD, action:elegido.action, index:elegido.index };
     }
     // sin nada que merezca la pena: a la batalla o a terminar
+    /* GitHub #13: «la IA pasa por todas las fases aunque solo tenga cartas
+       colocadas». Sin nada boca arriba en ataque no hay batalla que hacer:
+       entrar era otra ventana de respuesta y dos carteles de fase más. */
+    const conQuePegar = v.monstruos.some(x => !x.bocaAbajo && !x.defensa && atk(x) > 0);
     return { type:R.SELECT_IDLECMD,
-             action: m.to_bp ? IA.TO_BP : IA.TO_EP, index:null };
+             action: (m.to_bp && (conQuePegar || !m.to_ep || !exp("sinBatallaVacia"))) ? IA.TO_BP : IA.TO_EP, index:null };
   }
 
   /* ══════════ BATTLE PHASE ══════════ */
+  /* ══ CUANDO NO SE PUEDE NO ATACAR ══
+     Reddit, día 2: Berserk Gorilla («debe atacar si puede») delante de un
+     Mobius más grande y el duelo parado para siempre. Con un monstruo
+     obligado a atacar, el motor no ofrece ni Main Phase 2 ni End Phase
+     (to_m2 y to_ep a falso), pero el bot, que con razón no quería
+     estrellarse, contestaba «paso a la End Phase». Respuesta ilegal, el
+     motor pregunta otra vez, el bot contesta lo mismo… Ahora, si pasar no
+     está permitido, ataca: el obligado primero, y entre las opciones la
+     que menos duele (`check-obligado` lo prueba). */
   function battlePhase(m, intento){
+    const r = battlePhaseLibre(m, intento);
+    if(r?.action === BA.SELECT_BATTLE || m.to_m2 || m.to_ep) return r;
+    const ataques = m.attacks || [];
+    if(!ataques.length) return r;
+    const golpe = l => { const c = duel.resolve(l, l.code); return c?.atkReal ?? db.get(l.code)?.attack ?? 0; };
+    const orden = ataques.map((l, i) => ({ i, a:golpe(l) })).sort((x, y) => y.a - x.a);
+    traza(`tengo que atacar (no me dejan pasar de fase): ataco con el más fuerte`);
+    return { type:R.SELECT_BATTLECMD, action:BA.SELECT_BATTLE, index:orden[intento % orden.length].i };
+  }
+  function battlePhaseLibre(m, intento){
     const v = vistaDe(duel, yo, db, names);
     const ataques = (m.attacks||[]).map((l,i)=>{
       const c = duel.resolve(l, l.code);
@@ -2663,6 +2709,17 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
       return { type:R.SELECT_BATTLECMD, action: m.to_m2?BA.TO_M2:BA.TO_EP, index:null };
     }
 
+    /* ══ CON WABOKU YA RESUELTA, ATACAR NO HACE NADA ══
+       Reddit, día 2: Waboku del rival resuelta y el bot atacó con todo
+       igual. Este turno no le hago daño de batalla ni le mato nada en
+       combate; lo único que consigo es voltear sus tapadas (y sus
+       efectos de volteo) y darle otra ventana para una trampa. Solo se
+       ataca si un ataque concreto gana algo que Waboku no tapa: hoy, nada
+       que el bot sepa medir, así que no se ataca. */
+    if(exp("wabokuResuelta") && (v.resueltasRivalTurno ?? []).some(n => /^Waboku/.test(n))){
+      traza(`no ataco: su Waboku ya se resolvió (ni daño ni destrucción por batalla este turno)`);
+      return { type:R.SELECT_BATTLECMD, action: m.to_m2?BA.TO_M2:BA.TO_EP, index:null };
+    }
     const rivales = v.monstruosRival;
     /* Cuánto vale atacar con este monstruo, mirando TODOS los objetivos.
        El escáner de partidas decía que el 58% de los ataques no conseguían
@@ -3240,6 +3297,17 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
            monstruo boca abajo se cambia igual. Tumbar algo en respuesta
            no para nada; es tirar la carta. */
         if(!atacante && negando && rolDe(negando) === "swap") return -1;
+        /* ══ SI EL QUE ATACA ES MÍO ROBADO, TUMBAR A OTRO NO PARA NADA ══
+           GitHub #15: me robó Don Zaloog con Snatch Steal y atacó con D.D.
+           Warrior Lady y luego con el Zaloog. Al segundo ataque la IA tumbó
+           a la Lady, que YA había atacado. Al robado no se le tumba (ver
+           `noTumbarRobado`: se lo quedaría), así que el ataque en curso no
+           se para; solo vale tumbar algo suyo que aún no haya atacado. */
+        if(exp("noTumbarRobado") && atacante && duel.cards?.get(duel.atacante?.uid)?.owner === yo){
+          const aunPegan = v.monstruosRival.filter(x => !x.bocaAbajo && !x.defensa && !esFicha(x)
+            && x.uid !== duel.atacante?.uid && x.atacoTurno !== v.turno && duel.cards?.get(x.uid)?.owner !== yo);
+          if(!aunPegan.length) return -1;
+        }
         /* ══ LO QUE YA VA A QUEDAR BOCA ABAJO ══
            E, 20-09 (Zombie, p1, T4): Ring of Destruction a su Pyramid
            Turtle atacante, él respondió con Book of Moon a su propia
@@ -3967,7 +4035,9 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
         const real = x => duel.at(x.l.controller, x.l.location, x.l.sequence);
         const ajusteTumbar = x => !(exp("noTumbarRobado") && tumba) ? 0
             : (real(x)?.owner === yo ? -6 : 0)
-              + (duel.atacante && real(x)?.uid === duel.atacante.uid ? 2 : 0);
+              + (duel.atacante && real(x)?.uid === duel.atacante.uid ? 2 : 0)
+              /* lo que ya atacó este turno no va a pegar más: tumbarlo no corta nada */
+              + ([8,16,32,64,128].includes(duel.phase) && duel.turnPlayer !== yo && real(x)?.atacoTurno === duel.turnCount && real(x)?.uid !== duel.atacante?.uid ? -3 : 0);
         const mejor = caraArriba.sort((a,b)=>(nota(b)+ajusteTumbar(b))-(nota(a)+ajusteTumbar(a)))[0];
         traza(`objetivo boca arriba: ${mejor.c.nombre}`);
         return { type:R.SELECT_CARD, indicies:[mejor.i] };
@@ -4194,7 +4264,24 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
     const cuantas = beneficio ? Math.max(min, max)
                               : Math.min(Math.max(min,1), Math.max(max,1));
     const desplaz = intento % Math.max(1, orden.length-cuantas+1);
-    const idx = orden.slice(desplaz, desplaz+cuantas).map(o=>o.i);
+    let idx = orden.slice(desplaz, desplaz+cuantas).map(o=>o.i);
+    /* Tributos: `min` son TRIBUTOS y una carta puede valer dos (Double
+       Coston con un OSCURO). Se van cogiendo, de la más prescindible a la
+       que menos, hasta llegar; si una sola que vale dos basta y es de las
+       baratas, mejor que gastar dos cartas. */
+    if(esTributo && lista.some(l => (l.release_param ?? 1) > 1)){
+      const vale = i => Math.max(1, Number(lista[i].release_param) || 1);
+      const doble = orden.slice(0, cuantas).find(o => vale(o.i) >= min);
+      if(doble) idx = [doble.i];
+      else {
+        idx = []; let suma = 0;
+        for(const o of orden.slice(desplaz).concat(orden.slice(0, desplaz))){
+          if(suma >= min) break;
+          if(suma + vale(o.i) > Math.max(min, m.max ?? min)) continue;
+          idx.push(o.i); suma += vale(o.i);
+        }
+      }
+    }
     if(m.type===T.SELECT_UNSELECT_CARD)
       return { type:R.SELECT_UNSELECT_CARD, index: (m.can_finish && intento>=lista.length) ? null : idx[0] };
     return { type: esTributo?R.SELECT_TRIBUTE:R.SELECT_CARD, indicies: idx };
@@ -4480,6 +4567,11 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
       }
       /* Reversal Quiz: «monstruo, mágica o trampa» con la de arriba a la vista. */
       case T.SELECT_OPTION: {
+        /* Cantar la moneda (Fairy Box y compañía): opciones 60/61, cara o
+           cruz. Sin esto contestaba el piloto genérico, que dice siempre
+           la primera: el bot cantaba cara SIEMPRE y se notaba (Reddit). */
+        if((m.options ?? []).length === 2 && m.options.every(o => o === 60n || o === 61n || o === 60 || o === 61))
+          return { type:R.SELECT_OPTION, index: Math.random() < 0.5 ? 0 : 1 };
         if(!exp("library")) return null;
         const top = duel.cadena?.at(-1);
         if(!(top?.controller === yo && canon(names[top.code]?.name ?? "") === "Reversal Quiz")) return null;
