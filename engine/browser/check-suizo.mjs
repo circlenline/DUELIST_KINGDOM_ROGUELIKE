@@ -95,7 +95,17 @@ ok(`línea de corte: ${[...lineaCorte].sort((a,b)=>b[0]-a[0]).map(([p, n]) => `$
   peor < 0.01 ? ok(`los mazos salen con su peso (desviación máxima ${(peor*100).toFixed(1)} puntos)`)
               : mal("los mazos salen con su peso", `${quien}: ${(peor*100).toFixed(1)} puntos`);
   const porBot = m => (cuenta.get(m) ?? 0) / N;
-  ok(`por torneo: ${MAZOS.filter(m => S.pesoDe(m) === 12).reduce((t, m) => t + porBot(m), 0).toFixed(1)} bots de tier S de 31`);
+  /* 19-11, la comunidad: «demasiadas variaciones de Chaos Control». La
+     variedad se mide por familias: el armazón de Goat Control / Chaos no
+     puede llevarse más de la mitad de los bots y el aggro, al menos uno
+     de cada cinco. */
+  const CONTROL = ["Goat Control · Worlds 2020","Chaos Turbo · Worlds 2020","Chaos Control","Warrior Goat Control",
+    "Emissary Goat Control","Horus Goat Control","Phoenix Goat Control","Zombie Goat Control","Burn Goat Control","Cat Control"];
+  const AGGRO = ["Beastdown","Earth Aggro","Warrior Aggro","Umi · Water Aggro","Bazoo Return · Worlds","Monarch"];
+  const parte = lista => lista.reduce((t, m) => t + porBot(m), 0) / 31;
+  const pc = parte(CONTROL), pa = parte(AGGRO);
+  (pc <= 0.55 && pa >= 0.2) ? ok(`variedad: Goat Control/Chaos ${(pc*100).toFixed(0)} % de los bots · aggro ${(pa*100).toFixed(0)} %`)
+                            : mal("variedad de mazos", `Goat Control/Chaos ${(pc*100).toFixed(0)} % · aggro ${(pa*100).toFixed(0)} %`);
   if(CRUCES){
     const enTop = m => (cuentaTop.get(m) ?? 0) / Math.max(1, cuenta.get(m) ?? 0);
     const orden = MAZOS.map(m => [m, enTop(m)]).sort((a, b) => b[1] - a[1]);

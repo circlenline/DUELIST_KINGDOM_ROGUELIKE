@@ -93,8 +93,10 @@ const filtroMotor = (p, e) => {
   if(rel.startsWith("browser/out/")) return e.isFile() && partes.length === 3 && BASE_OUT.has(e.name);
   if(rel === "deckbuilder/deckbuilder.html") return false;
   if(partes[0] === "data" && partes.length === 2 && FUERA_DATOS.test(e.name)) return false;
-  if(e.isFile() && /^_/.test(e.name)) return false;                       // borradores
-  if(e.isFile() && /\.(log|zip|tgz)$|^goat-log-|^goat-copia-/.test(e.name)) return false;
+  if(/^_/.test(e.name)) return false;                                     // borradores (archivos y carpetas: _navegador/)
+  /* .jsonl: datos crudos de medir (calibracion.jsonl del draft son 8 MB);
+     lo que usa el juego ya está resumido en data/. */
+  if(e.isFile() && /\.(log|zip|tgz|jsonl)$|^goat-log-|^goat-copia-/.test(e.name)) return false;
   if(e.isFile() && fs.statSync(p).size > 12 * 1048576) { console.log("· fuera por tamaño: " + rel); return false; }
   return true;
 };

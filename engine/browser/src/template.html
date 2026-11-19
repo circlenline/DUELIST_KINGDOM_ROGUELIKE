@@ -2683,6 +2683,12 @@ html,body{overflow-x:hidden}
   60%{transform:translateX(4px) rotate(2deg)}}
 /* elegir avatar en el menú */
 #mAvatares{display:grid;grid-template-columns:repeat(7,1fr);gap:6px;max-height:184px;overflow:auto;padding:2px}
+.tCara{width:34px;height:34px;object-fit:cover;vertical-align:middle;margin-right:8px;border:1px solid var(--gold);border-radius:3px}
+#tAvatares{display:grid;grid-template-columns:repeat(8,1fr);gap:6px;max-height:150px;overflow:auto;padding:2px;margin-bottom:10px}
+#tAvatares .av{position:relative;aspect-ratio:1;cursor:pointer;border:1px solid var(--edge);min-width:44px}
+#tAvatares .av img{width:100%;height:100%;object-fit:cover;opacity:.72;display:block}
+#tAvatares .av.sel{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold),0 0 16px rgba(216,180,92,.5)}
+#tAvatares .av.sel img{opacity:1}
 #mAvatares .av{position:relative;aspect-ratio:1;cursor:pointer;border:1px solid var(--edge);
   background:#0d1424;transition:.14s var(--ease);overflow:hidden}
 #mAvatares .av img{width:100%;height:100%;object-fit:cover;opacity:.72;display:block}
@@ -2779,6 +2785,7 @@ html,body{overflow-x:hidden}
   #menu select{font-size:13px}
   #fin .finBtn{font-size:12px}
 }
+/*__DRAFT_CSS__*/
 </style></head>
 <body>
 
@@ -2824,6 +2831,8 @@ html,body{overflow-x:hidden}
     </div>
   </div>
 </div>
+<!-- ══ MODO DRAFT · RETRO PACK 2 ══ pantalla propia: src/draft/pantalla.txt -->
+<div id="draft" hidden><div id="dCaja"></div></div>
 <div id="menu">
   <div class="mcaja">
     <div class="mpant" id="pHome" data-p="home">
@@ -2835,6 +2844,7 @@ html,body{overflow-x:hidden}
       <button class="mbig sec" id="irJugar">Duelo libre</button>
       <button class="mbig sec" id="irSala">Jugar con un amigo</button>
       <button class="mbig sec" id="irTorneo">Torneo suizo · Bo3</button>
+      <button class="mbig sec" id="irDraft">Draft · Retro Pack 2</button>
       <button class="mbig sec" id="mDeck">Deck Builder</button>
       <button class="mbig sec" id="irOpciones">Opciones</button>
     </div>
@@ -2895,6 +2905,7 @@ html,body{overflow-x:hidden}
       <label class="mlab">Ventanas de respuesta</label>
       <div class="mrej" id="mCadenas">
         <button data-v="auto">Automáticas</button>
+        <button data-v="sentido">Cuando tiene sentido</button>
         <button data-v="always">Preguntar siempre</button>
         <button data-v="nunca">No activar nada</button>
       </div>
@@ -2905,6 +2916,10 @@ html,body{overflow-x:hidden}
       </div>
       <p class="mnota">Con "automáticas" solo se te pregunta cuando hay algo real
         a lo que responder. En el turno del rival siempre se pregunta.</p>
+      <p class="mnota">Con "cuando tiene sentido" solo se te pregunta si alguna de
+        tus cartas puede hacer algo ahí: Waboku o Mirror Force con un ataque
+        declarado, Trap Hole tras una invocación, lo demás cuando el rival hace
+        algo o en su End Phase, y siempre si te van a destruir una carta.</p>
       <label class="mlab">Idioma</label>
       <div class="mrej" id="mIdioma">
         <button data-v="en">English</button>
@@ -3159,6 +3174,8 @@ const STORY_DECKS     = /*__STORY_DECKS__*/;
 const STORY_CARDS     = /*__STORY_CARDS__*/;
 const STORY_PERSONAJES= /*__STORY_PERSONAJES__*/;
 const STORY_EVENTOS   = /*__STORY_EVENTOS__*/;
+/* Retro Pack 2: las 101 cartas con su passcode del motor y su rareza. */
+const RP02            = /*__RP02__*/;
 /* La tabla de cruces 20×20 del torneo suizo (medir-cruces.mjs). */
 const CRUCES          = /*__CRUCES__*/;
 const AVATAR_IA = "roland";
@@ -4037,7 +4054,8 @@ function inscribirmeSuizo(idMazo, miNombre){
      mueven cartas entre main y side, y cada match empieza con él. */
   const s = Suizo.nuevoSuizo({ semilla: String(globalThis.GOAT_SEMILLA_SUIZO ?? Date.now()),
                                miNombre: (miNombre || "").trim().slice(0, 18) || __T_("Tú"),
-                               miMazo: m.nombre, mazos: mazosMeta().map(x => x.nombre) });
+                               miMazo: m.nombre, mazos: mazosMeta().map(x => x.nombre),
+                               avatares: Object.keys(AVATARES), miAvatar: cfg.avatar });
   s.miMazoId = m.id;
   s.registro = { main:[...m.main], extra:[...(m.extra ?? [])], side:[...(m.side ?? [])] };
   SUIZO_ESTADO = s; guardarSuizo();
@@ -4060,6 +4078,7 @@ function empezarMatchSuizo(){
   t.actual.suizo = claveMesa(s);
   t.actual.etiqueta = nombreRonda(s);
   t.actual.mazoRival = rival.mazo;
+  t.actual.avatarIA = Suizo.avatarDe(s, rival, Object.keys(AVATARES));
   guardarTorneo(t);
   return t.actual;
 }
@@ -4151,6 +4170,22 @@ function pintarInscripcion(caja){
   nom.oninput = () => { cfg.nombreSuizo = nom.value; guardarCfg(); };
   caja.appendChild(nom);
   caja.appendChild(elT("div", "mnota", __T_("El mazo que registras es el de todo el torneo: entre partidas solo puedes mover cartas entre el main y el side.")));
+  /* Tu cara en el torneo (es la misma que la del duelo VS). Los 31 rivales
+     llevan cada uno la suya. */
+  caja.appendChild(elT("label", "mlab", __T_("Tu avatar")));
+  const avs = elT("div", "tAvatares"); avs.id = "tAvatares";
+  const pintarCaras = () => {
+    avs.innerHTML = "";
+    for(const k in AVATARES){
+      const d = elT("div", "av" + (k === cfg.avatar ? " sel" : ""));
+      d.title = __T_(AVATARES[k].n);
+      d.innerHTML = `<img src="${avatarSrc(k)}" alt="${escT(__T_(AVATARES[k].n))}">`;
+      d.onclick = () => { cfg.avatar = k; guardarCfg(); pintarCaras(); pintarAvatares(); };
+      avs.appendChild(d);
+    }
+  };
+  pintarCaras();
+  caja.appendChild(avs);
   const b = botonTorneo("Inscribirme", "mbig", () => inscribirmeSuizo(sel.value, nom.value));
   b.id = "tInscribir";
   caja.appendChild(b);
@@ -4213,6 +4248,7 @@ function pintarMiMesa(caja, s, mesa){
   const c = elT("div", "tRondaCaja");
   c.id = "tRonda";
   c.appendChild(elT("div", "tRondaTit",
+    `${(() => { const a = Suizo.avatarDe(s, rival, Object.keys(AVATARES)); return a && AVATARES[a] ? `<img class="tCara" src="${avatarSrc(a)}" alt="">` : ""; })()}` +
     `${__T_("Mesa")} ${mesa.mesa} · ${__T_("contra")} <b>${escT(rival.nombre)}</b> (${recordTxt(s, rival.id)}) · ${m.yo}-${m.ia}`));
   const pips = elT("div", "tPips");
   for(let i = 0; i < 3; i++){
@@ -4514,7 +4550,7 @@ function jugarPartidaTorneo(){
     ...(empiezasTu === null ? {} : { empiezasTu }),
     alTerminar: (ganaste, datos={}) => terminarPartidaTorneo(ganaste, datos),
     avatarMio:{ src:avatarSrc(cfg.avatar), nombre:avatarNombre(cfg.avatar) },
-    avatarRival:{ src:avatarSrc(AVATAR_IA), nombre: r.nombreIA } };
+    avatarRival:{ src:avatarSrc(r.avatarIA && AVATARES[r.avatarIA] ? r.avatarIA : AVATAR_IA), nombre: r.nombreIA } };
   /* Gancho para las pruebas: `check-torneo` no arranca el motor, solo
      comprueba lo que se le pediría. */
   if(typeof globalThis.__LANZAR_TORNEO__ === "function"){
@@ -5209,7 +5245,7 @@ globalThis.__PRUEBA_SALA__ = { get estado(){ return salaEstado(); }, pintar: pin
 
 globalThis.__MAZOS_DE_PRUEBA__ = () => listaMazos();
 globalThis.__PRUEBA_TORNEO__ = { get estado(){ return torneoActual(); }, pintar: pintarTorneo,
-  get suizo(){ return suizoActual(); }, inscribir: inscribirmeSuizo, siguiente: siguienteRondaSuizo,
+  get suizo(){ return suizoActual(); }, inscribir: inscribirmeSuizo, avatarSrc, siguiente: siguienteRondaSuizo,
   hastaElFinal: hastaElFinalSuizo, retirarme: retirarmeSuizo, nuevo: nuevoTorneoSuizo,
   jugar: jugarPartidaTorneo, terminar: terminarPartidaTorneo,
   /* El archivo del match sin pasar por la descarga: en el DOM simulado no
@@ -5321,5 +5357,6 @@ function volverAlReino(ganaste){
 }
 
 document.getElementById("irReino").onclick = () => abrirReino();
+/*__DRAFT_UI__*/
 </script>
 </body></html>

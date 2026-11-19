@@ -8,7 +8,7 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
    (`out/goat-publico.html`): sin los mazos propios de E sembrados
    (`mazos-propios.json`), que se quedan solo en su ordenador. La de
    trabajo (`out/goat.html`) sigue llevándolos. */
-const VERSION = "1.2";
+const VERSION = "1.3";
 const PUBLICO = process.env.GOAT_PUBLICO === "1";
 const R = f => readFileSync(f,"utf-8");
 const stripExports = s => s.replace(/^export\s+(const|function|class|async function|let)/gm,"$1")
@@ -86,6 +86,17 @@ const juntarStory = () => ["rng.js","balance.js","mapa.js","estado.js","record.j
                            "coleccion.js","recompensas.js","utilidad.js","personajes.js","historia.js","ui.js"]
   .map(f => stripImports(stripExports(R("./src/story/"+f)), "story/"+f)).join("\n");
 
+/* El modo draft (Retro Pack 2). Mismo truco que el modo historia: los
+   módulos se concatenan en un ámbito, en orden de dependencias. Las reglas
+   y la IA se prueban en node (check-draft.mjs); la pantalla va aparte,
+   dentro del script del menú (src/draft/pantalla.txt), porque usa sus
+   globales (boot, CARDS, cfg…). */
+const juntarDraft = () => ["azar.js","cartas.js","rutas.js","sobres.js","mazo.js","picks.js","mesa.js","evento.js","duelos.js","draft.js"]
+  .map(f => stripImports(stripExports(R("./src/draft/"+f)), "draft/"+f)).join("\n");
+const LISTA_DRAFT = "prepararDraft, picksDeBots, sugerirPick, avanzar, construirMazo, construirAsiento, evaluarMain, categoriaDe, " +
+  "nuevaMesa, vistaDe, aplicarPaso, poolDe, integridad, sanearMesa, direccion, CONFIG_DRAFT, nuevoEvento, emparejar, apuntar, " +
+  "rondaCompleta, cerrarRonda, clasificacion, retirar, mesaDe, registro, matchDeBots, dueloDeBots, MODELO_SOBRE, PLANES, CATEGORIA, hashTexto";
+
 // núcleo: su "export{a as B,...}" pasa a ser el objeto que devuelve el ámbito
 let core = R("./out/ocgcore.bundle.js");
 const em = core.match(/export\{([^}]*)\}\s*;?\s*$/m);
@@ -106,17 +117,19 @@ const parts = [
 `const {makeAutoPlayer} = ${iife(stripExports(R("./src/autopilot.mjs")), "makeAutoPlayer")};`,
 `const {makeTrivialResolver} = ${iife(stripExports(R("./src/trivial.js")), "makeTrivialResolver")};`,
 `const {esVentanaDePrioridad, hayDisparadoresPendientes} = ${iife(stripExports(R("./src/prioridad.js")), "esVentanaDePrioridad, hayDisparadoresPendientes")};`,
+`const {valePreguntar, clasificarCarta} = ${iife(stripExports(R("./src/ventanas.js")), "valePreguntar, clasificarCarta")};`,
 // Contador de uso. Sin código de sitio configurado no manda un solo byte,
 // y desde `file://` tampoco: ver la cabecera de src/telemetria.js.
 `const {Tele} = ${iife(stripExports(R("./src/telemetria.js")), "Tele")};`,
 `globalThis.__TELE__ = Tele;`,
 // Torneo suizo con top 16: emparejamientos, clasificación, corte y cuadro.
-`const Suizo = ${iife(stripExports(R("./src/suizo.js")), "SUIZO_VERSION, JUGADORES, RONDAS_SUIZAS, CORTE, NOMBRES_CORTE, PESOS, pesoDe, nuevoSuizo, registro, clasificacion, emparejar, rondaActual, miMesa, jugador, rivalEn, apuntarMiMatch, bo3, resolverResto, rondaCompleta, siguienteRonda, sigoDentro, simularHastaElFinal, retirarme, resultado, probDesdeCruces, sanearSuizo")};`,
+`const Suizo = ${iife(stripExports(R("./src/suizo.js")), "SUIZO_VERSION, JUGADORES, RONDAS_SUIZAS, CORTE, NOMBRES_CORTE, PESOS, pesoDe, nuevoSuizo, registro, clasificacion, emparejar, rondaActual, miMesa, jugador, rivalEn, apuntarMiMatch, bo3, resolverResto, rondaCompleta, siguienteRonda, sigoDentro, simularHastaElFinal, retirarme, resultado, probDesdeCruces, sanearSuizo, avatarDe")};`,
 // Torneo meta al mejor de tres: solo lógica, la pantalla está en template.html.
 `const Torneo = ${iife(stripExports(R("./src/torneo.js")), "nuevoTorneo, sanearTorneo, marcador, rondaDecidida, empezarRonda, empiezoYo, apuntarPartida, abandonarRonda, estadisticas, resumenTexto, GANA_MATCH, sideValido, aplicarSide, multiset, MAIN_MIN, SIDE_MAX, nuevaTanda, tandaDe, claveRonda, cerrarRonda")};`,
 `const {crearCerebro, NIVELES, combinacionesSuma:__combIA, crearPensador, planDeSide, diagnosticar, valorCarta:__valorCarta, planDe:__planDe, canon:__canon} = ${iife(juntarIA(), "crearCerebro, NIVELES, combinacionesSuma, crearPensador, planDeSide, diagnosticar, valorCarta, planDe, canon")};`,
 `${(comprobarExports(vistaFuente, LISTA_VIEW, "src/view.js"), "")}` +
   `const View = ${iife(stripExports(vistaFuente), LISTA_VIEW)};`,
+`const Draft = ${iife(juntarDraft(), LISTA_DRAFT)};`,
 `const Story = ${iife(juntarStory(),
    "crearHistoria, crearAlmacen, nuevaRun, sembrarManoDeJefe, crearCatalogo, FAMILIAS, generarMapa, semillaTexto, rngDeSemilla, exportarProgreso, importarProgreso, cargarMeta, CHIPS, ACTOS, montarReino")};`,
 // Salas para jugar con un amigo: qué viaja y cómo se filtra (sala.js) y
@@ -175,7 +188,12 @@ const html = R("./src/template.html")
   .replace("/*__STORY_PERSONAJES__*/",() => R("../data/story/personajes.json"))
   .replace("/*__PEERJS__*/",          () => R("../vendor/peerjs.min.js").replace(/\/\/# sourceMappingURL=.*$/m, ""))
   .replace("/*__CRUCES__*/",          () => existsSync("../data/cruces.json") ? R("../data/cruces.json") : "null")
-  .replace("/*__STORY_EVENTOS__*/",   () => R("../data/story/eventos.json"));
+  .replace("/*__STORY_EVENTOS__*/",   () => R("../data/story/eventos.json"))
+  /* Las 101 cartas de RP02 (engine/draft/importar-rp02.mjs), la pantalla
+     del draft y su estilo. */
+  .replace("/*__RP02__*/",            () => R("../data/draft/rp02.json"))
+  .replace("/*__DRAFT_UI__*/",        () => R("./src/draft/pantalla.txt"))
+  .replace("/*__DRAFT_CSS__*/",       () => R("./src/draft/draft.css"));
 
 const SALIDA = PUBLICO ? "./out/goat-publico.html" : "./out/goat.html";
 writeFileSync(SALIDA, html);

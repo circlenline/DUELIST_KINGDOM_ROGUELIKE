@@ -303,6 +303,65 @@ const PLANES = [
             "seguir invocando: que no levante campo"],
   },
   {
+    /* goatformat.com/deck-guides/relinquished-control (19-11): el armazón
+       de Goat Control con Relinquished como remoción que se repite: cada
+       turno se lleva un monstruo suyo. Manju y Senju buscan las piezas del
+       ritual y Tsukuyomi las vuelve a voltear para buscar otra vez. Va
+       ANTES que Goat Control: comparte Scapegoat, Metamorphosis y Tsukuyomi. */
+    nombre: "Relinquished",
+    objetivo: "control",
+    condicion: "ritual de Relinquished y absorber su mejor monstruo cada turno",
+    senal: ["Relinquished","Black Illusion Ritual","Manju of the Ten Thousand Hands","Senju of the Thousand Hands"],
+    minimo: 4,
+    requiere: ["Relinquished"],
+    agresivo: 0.45, aguanta: false,
+    claves: { "Relinquished":3, "Black Illusion Ritual":2, "Thousand-Eyes Restrict":2,
+              "Black Luster Soldier - Envoy of the Beginning":3 },
+    motor: ["Manju of the Ten Thousand Hands","Senju of the Thousand Hands","Tsukuyomi",
+            "Magician of Faith","Scapegoat","Sangan","Graceful Charity","Pot of Greed"],
+    sostener: ["Relinquished"],
+    pasos: ["Manju o Senju: buscar Relinquished o el ritual",
+            "ritual cuando tenga algo suyo boca arriba que absorber",
+            "Relinquished se lleva su mejor monstruo; el equipo le hace de escudo",
+            "Tsukuyomi re-tapa a Manju para buscar otra vez"],
+  },
+  {
+    /* goatformat.com/deck-guides/earth-aggro: Giant Rat saca lo que haga
+       falta, Gigantes y The Rock Spirit salen gratis desterrando TIERRA del
+       cementerio, Goblin Attack Force rompe muros. Llenar la mesa y pegar. */
+    nombre: "Earth Aggro",
+    objetivo: "beatdown",
+    condicion: "llenar la mesa de TIERRA y pegar cada turno",
+    senal: ["Gigantes","The Rock Spirit","Goblin Attack Force","Giant Rat","D.D. Assailant"],
+    minimo: 8,
+    agresivo: 0.9, aguanta: false,
+    claves: { "Gigantes":2, "Goblin Attack Force":2, "Injection Fairy Lily":2 },
+    motor: ["Giant Rat","Reinforcement of the Army","Smashing Ground","Trap Dustshoot"],
+    sostener: [],
+    pasos: ["Giant Rat: lo que muera, saca otro TIERRA",
+            "Gigantes y The Rock Spirit salen gratis del cementerio",
+            "Goblin Attack Force contra los muros",
+            "Smashing Ground y Dust Tornado abren el último golpe"],
+  },
+  {
+    /* goatformat.com/deck-guides/water-aggro: A Legendary Ocean (cuenta
+       como Umi) sube a los AGUA y baja su nivel: Levia-Dragon - Daedalus
+       sale con un tributo y se lleva todo lo demás. Mother Grizzly busca. */
+    nombre: "Umi",
+    objetivo: "beatdown",
+    condicion: "A Legendary Ocean en el campo y presionar con los AGUA",
+    senal: ["A Legendary Ocean","Mermaid Knight","Abyss Soldier","Mother Grizzly","Lekunga","Levia-Dragon - Daedalus"],
+    minimo: 7,
+    agresivo: 0.8, aguanta: false,
+    claves: { "A Legendary Ocean":2, "Levia-Dragon - Daedalus":3, "Abyss Soldier":2 },
+    motor: ["Mother Grizzly","Terraforming","Lekunga","Mermaid Knight"],
+    sostener: ["A Legendary Ocean"],
+    pasos: ["A Legendary Ocean pronto: es lo que sube a todo el mazo",
+            "Mother Grizzly busca otro AGUA al morir",
+            "Abyss Soldier devuelve a la mano su mejor carta",
+            "Levia-Dragon - Daedalus limpia la mesa cuando voy por detrás"],
+  },
+  {
     /* goatformat.com/zombie: la cadena de Pyramid Turtle saca Vampire
        Lord o Ryu Kokki; Creature Swap con fichas es robo puro. */
     nombre: "Zombie",
@@ -379,6 +438,28 @@ const PLANES = [
             "ficha → Metamorphosis → Thousand-Eyes Restrict sobre su mejor monstruo",
             "picar con Airknight y guardar el Black Luster para cerrar"],
   },
+  {
+    /* goatformat.com/deck-guides/warrior (19-11): la lista de Sean Montague,
+       4.º en Clash of Champions. Sin Scapegoat ni Metamorphosis: presión
+       desde el turno uno con guerreros de 1600-1800, Reinforcement of the
+       Army para encontrar la respuesta y trampas para su jugada. Va DESPUÉS
+       de Goat Control para que el Warrior Goat Control siga siendo control. */
+    nombre: "Warrior Aggro",
+    objetivo: "beatdown",
+    condicion: "presión desde el turno uno con guerreros y quitar lo que estorbe",
+    senal: ["Blade Knight","D.D. Warrior Lady","Exiled Force","Kycoo the Ghost Destroyer",
+            "Mystic Swordsman LV2","Don Zaloog","Ninja Grandmaster Sasuke","Zombyra the Dark",
+            "Reinforcement of the Army"],
+    minimo: 10,
+    agresivo: 0.9, aguanta: false,
+    claves: { "Black Luster Soldier - Envoy of the Beginning":3, "Blade Knight":1, "Zombyra the Dark":1 },
+    motor: ["Reinforcement of the Army","Trap Dustshoot","Delinquent Duo"],
+    sostener: [],
+    pasos: ["un guerrero cada turno y a pegar",
+            "Reinforcement of the Army: la respuesta que pida la mesa",
+            "Nobleman, Kycoo y Sasuke contra lo colocado",
+            "Solemn y Sakuretsu para su jugada fuerte"],
+  },
 ];
 
 /* Si no se reconoce nada, es un mazo de pegar: monstruos y remoción. */
@@ -404,6 +485,13 @@ export function planDe(decklist, names){
        señales solo no distingue mazos que comparten motor. */
     (!pl.requiere || pl.requiere.some(n => cuenta.has(n)))) ?? POR_DEFECTO;
 
+  return materializarPlan(p);
+}
+
+/* Una fila de plan (como las de PLANES) → el objeto que usa el cerebro.
+   Lo usa también el modo draft, que escribe el plan del mazo que ha
+   construido (src/draft/mazo.js · planParaDuelo). */
+export function materializarPlan(p){
   const claves = p.claves ?? {};
   const motor  = new Set(p.motor ?? []);
   const sost   = new Set(p.sostener ?? []);

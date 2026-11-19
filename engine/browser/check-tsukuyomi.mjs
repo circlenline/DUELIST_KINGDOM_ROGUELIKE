@@ -111,6 +111,56 @@ console.log("═══ TSUKUYOMI Y BOOK OF MOON EN EL MOTOR ═══\n");
   comprobar("Tsukuyomi tumba el TER rival", ter && (ter.pos & 0x0a));
 }
 
+/* 4 · (19-11, E) Magician of Faith: volteo, Book of Moon a ella y… ¿otra
+   vez? Lo que el motor diga es lo que la IA tiene que dar por hecho. */
+{
+  const e = await montar(
+    { monstruos:[{ carta:"Magician of Faith", pos:P.FACEDOWN_DEFENSE }], mano:["Book of Moon"], gy:["Pot of Greed"] },
+    { monstruos:[{ carta:"Sangan", pos:P.FACEUP_ATTACK }] });
+  let paso = 0, otraVez = null;
+  await e.correr((m) => {
+    if(e.turnPlayer !== 0) return m.type === T.SELECT_IDLECMD ? pasarIdle(m) : null;
+    if(m.type === T.SELECT_IDLECMD){
+      if(paso === 0){ const r = voltear(m, "Magician of Faith"); if(r){ paso = 1; return r; } }
+      if(paso === 1){ const r = activar(m, "Book of Moon"); if(r){ paso = 2; return r; } }
+      if(paso === 3){ otraVez = !!voltear(m, "Magician of Faith"); return "PARAR"; }
+      return pasarIdle(m);
+    }
+    if(m.type === T.SELECT_CARD){
+      if(paso === 2){ paso = 3; return elegirNombre(m, "Magician of Faith", 0); }
+      return { type:R.SELECT_CARD, indicies:[0] };
+    }
+    return null;
+  }, 600);
+  console.log(`  · Magician of Faith volteada y tumbada: ${otraVez ? "se puede voltear OTRA vez el mismo turno" : "no se puede voltear otra vez el mismo turno"}`);
+  comprobar("Magician of Faith tumbada por Book of Moon tras su volteo: el motor contesta", otraVez !== null, `paso ${paso}`);
+}
+
+/* 5 · Mi TER tumbado por mi Book of Moon: mis demás pueden atacar y el
+   TER se puede invocar por volteo (E, 19-11). */
+{
+  const e = await montar(
+    { monstruos:[{ carta:"Thousand-Eyes Restrict", pos:P.FACEUP_ATTACK }, { carta:"Luster Dragon", pos:P.FACEUP_ATTACK }], mano:["Book of Moon"] },
+    { monstruos:[] }, { roboInicial:0 });   // sin mano de relleno: el descarte del turno 1 se llevaba el Book of Moon
+  let paso = 0, ataca = false, volteo = false;
+  await e.correr((m) => {
+    if(e.turnPlayer !== 0) return m.type === T.SELECT_IDLECMD ? pasarIdle(m) : null;
+    if(m.type === T.SELECT_IDLECMD){
+      if(paso === 0 && !m.to_bp) return pasarIdle(m);          // turno 1: sin batalla, al siguiente
+      if(paso === 0){ const r = activar(m, "Book of Moon"); if(r){ paso = 1; return r; } }
+      if(paso === 2){ volteo = !!voltear(m, "Thousand-Eyes Restrict"); paso = 3;
+                      return { type:R.SELECT_IDLECMD, action:IA.TO_BP, index:null }; }
+      if(paso >= 4) return "PARAR";
+      return pasarIdle(m);
+    }
+    if(m.type === T.SELECT_CARD && paso === 1){ paso = 2; return elegirNombre(m, "Thousand-Eyes Restrict", 0); }
+    if(m.type === T.SELECT_BATTLECMD){ ataca = idx(m.attacks, "Luster Dragon") >= 0; paso = 4; return "PARAR"; }
+    return null;
+  }, 600);
+  comprobar("mi TER tumbado: se puede invocar por volteo ese turno", volteo, `paso ${paso}`);
+  comprobar("y con él boca abajo, Luster Dragon puede atacar", ataca);
+}
+
 const ok = pruebas.filter(p => p[1]).length;
 console.log(`\n${ok}/${pruebas.length} · ${ok === pruebas.length ? "Todo correcto" : "HAY FALLOS"}`);
 process.exit(ok === pruebas.length ? 0 : 1);

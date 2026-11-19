@@ -171,6 +171,119 @@ export function leerCarta(texto, datos){
   };
 }
 
+/* ══════════════════════════════════════════════════════════════════
+   QUÉ PASA CUANDO ESTA CARTA PIERDE UN COMBATE (01-11)
+
+   E: «la IA evalúa las acciones y sus beneficios inmediatos, pero no
+   sus consecuencias». En el combate eso era literal: `valeAtacar`
+   comparaba ATK con ATK, y lo que pasa DESPUÉS de ganar —Relinquished
+   que no muere porque se rompe el equipo, Newdoria que se lleva otro
+   monstruo, el buscador que repone la mano— vivía en parches por carta
+   (`floater`, `peligroso`) que solo conocían las cartas escritas a mano.
+   Las 95 cartas del pool con un efecto "al morir en combate" lo dicen en
+   su texto, así que se lee igual que el resto de este módulo.
+
+   Devuelve null si el texto no dice nada de eso.
+     enCombate  solo si muere EN COMBATE (Giant Rat); false = al salir del
+                campo como sea (Sangan)
+     efecto     reemplazo · busca · roba · destruye · destruyeAtacante ·
+                destierraAtacante · quema
+     atkMax / defMax  el tope de lo que saca un reemplazo
+   ══════════════════════════════════════════════════════════════════ */
+const AL_MORIR = /(destroyed by battle|destroyed (and sent to the (GY|Graveyard) )?as a result of battle|sent to the (GY|Graveyard) as a result of battle|sent from the field to the (GY|Graveyard))/i;
+const _alMorir = new Map();
+export function leerAlMorir(texto){
+  const t = String(texto ?? "");
+  if(_alMorir.has(t)) return _alMorir.get(t);
+  const m = AL_MORIR.exec(t);
+  let r = null;
+  if(m){
+    const tras = t.slice(m.index);
+    const num = re => { const x = re.exec(tras); return x ? Number(x[1] ?? x[2]) : null; };
+    r = { enCombate: !/sent from the field/i.test(m[0]), efecto:null, atkMax:null, defMax:null, quema:null };
+    if(/Special Summon .{0,90}from (your|the) Deck/i.test(tras)){
+      r.efecto = "reemplazo";
+      r.atkMax = num(/ATK of (\d+) or less|(\d+) or less ATK/i);
+      r.defMax = num(/DEF (?:of )?(\d+) or less|(\d+) or less DEF/i);
+    }
+    else if(/\badd .{0,90}to (your|the) hand/i.test(tras)) r.efecto = "busca";
+    else if(/\bdraw\b/i.test(tras)) r.efecto = "roba";
+    else if(/destroy the monster that destroyed this card/i.test(tras)) r.efecto = "destruyeAtacante";
+    else if(/banish that monster/i.test(tras)) r.efecto = "destierraAtacante";
+    else if(/(destroy that target|destroy 1 monster)/i.test(tras)) r.efecto = "destruye";
+    else if(/inflict (\d+) (points of )?damage to your opponent/i.test(tras)){
+      r.efecto = "quema"; r.quema = num(/inflict (\d+) (?:points of )?damage/i);
+    }
+    if(!r.efecto) r = null;
+  }
+  _alMorir.set(t, r);
+  return r;
+}
+
+/* Lo que protege a un monstruo en combate aunque "pierda" la cuenta:
+     sustituye  con un monstruo equipado, se rompe el equipo y él se queda
+                (Relinquished, Thousand-Eyes Restrict)
+     refleja    el daño de batalla que recibe su dueño lo recibe también
+                el atacante (Relinquished)
+     absorbe    se equipa monstruos del rival: si le rompes el equipo, el
+                turno siguiente puede llevarse otro */
+export function leerProteccion(texto){
+  const t = String(texto ?? "");
+  return {
+    sustituye: /(equipped monster is destroyed instead|destroy that equipped monster instead)/i.test(t),
+    refleja: /battle damage .{0,80}(also inflicted to your opponent|equal effect damage to your opponent)/i.test(t),
+    absorbe: /equip (it|that target) to this card/i.test(t),
+  };
+}
+
+/* ══ DAÑO DE EFECTO QUE SE PUEDE COBRAR AHORA ══
+   Para sumar fuentes de quema (letal combinado): cuánto hace la carta
+   con la mesa de ahora. Lee las tres formas del formato:
+     "Inflict 800 damage"                         → fijo
+     "500 damage … for each monster they control" → por monstruo suyo
+     "200 damage … for each card in their hand and for each card they
+      control"                                    → por carta suya
+   Devuelve null si no es una carta de quemar que se pueda medir. */
+export function quemaMedible(texto, v){
+  const t = String(texto ?? "");
+  const m = /inflict (\d+) (?:points of )?damage to your opponent/i.exec(t);
+  if(!m) return null;
+  const n = Number(m[1]);
+  const resto = t.slice(m.index);
+  if(/for each card in their hand and for each card they control/i.test(resto))
+    return n * ((v.manoRival?.cuantas ?? 0) + v.monstruosRival.length + v.backrowRival.length);
+  if(/for each monster they control/i.test(resto)) return n * v.monstruosRival.length;
+  if(/for each Effect Monster on the field/i.test(resto))
+    return n * [...v.monstruos, ...v.monstruosRival].filter(x => !x.bocaAbajo && (((x.datos?.type ?? 0) & 0x20) !== 0)).length;
+  if(/for each card in (their|your opponent's) hand/i.test(resto)) return n * (v.manoRival?.cuantas ?? 0);
+  if(/for each/i.test(resto)) return null;          // otra cuenta que no sé hacer
+  return n;
+}
+
+/* ══ LO QUE ACABA EN EL CAMPO DEL RIVAL ══
+   Lava Golem y Ojama Trio dicen "Special Summon … to your opponent's
+   field". La regla genérica "Special Summon" de arriba las leía como
+   reanimar algo propio (2,8) y el bot regalaba un 3000 sin nada que lo
+   frenara. Devuelve null o { cuerpos, atk, nivel?, tributaSuyos } */
+export function leerRegalo(texto, datos){
+  const t = String(texto ?? "");
+  if(!/to your opponent's (field|side of the field)/i.test(t) || !/Special Summon/i.test(t)) return null;
+  const tokens = /Special Summon (\d|three|two) .{0,20}Tokens?/i.exec(t);
+  const n = tokens ? ({ two:2, three:3 }[tokens[1]] ?? Number(tokens[1])) : 1;
+  const atkTok = /ATK (\d+)/i.exec(t);
+  return {
+    cuerpos: n,
+    atk: tokens ? Number(atkTok?.[1] ?? 0) : (datos?.attack ?? 0),
+    nivel: tokens ? 2 : (datos?.level ?? 0),
+    fichas: !!tokens,
+    tributaSuyos: (/Tributing (\d|two) monsters they control/i.exec(t)?.[1] ?? null),
+    /* "each time 1 is destroyed, its controller takes 300 damage" */
+    quemaAlMorir: Number(/takes (\d+) damage/i.exec(t)?.[1] ?? 0),
+    /* "Once per turn, during your Standby Phase: Take 1000 damage" */
+    quemaPorTurno: Number(/Standby Phase: Take (\d+) damage/i.exec(t)?.[1] ?? 0),
+  };
+}
+
 /* ¿Se cumple lo que la carta necesita para conseguir algo?
    `v` es la vista legal del bot; `ayuda` trae los cálculos que ya hace
    el cerebro (qué monstruo rival merece la pena) para no repetirlos. */
@@ -220,6 +333,23 @@ function utilidadCampo(bits, v){
 }
 export function utilidadLeida(texto, datos, v, ayuda){
   const lee = leerCarta(texto, datos);
+  /* ══ FICHAS PARA EL RIVAL (Ojama Trio) ══
+     La regla genérica "Special Summon" la leía como reanimar algo mío
+     (2,8) y se activaba en cualquier ventana. Tres fichas de 0/1000 en
+     SU campo valen por lo que le quitan: si le llenan las cinco zonas no
+     puede invocar nada, y cada una que muere le quema. En una mesa
+     cualquiera, poco (y le dan cuerpos para Metamorphosis). Cuando hace
+     letal con Just Desserts o Secret Barrel lo decide el cerebro, que
+     suma la quema entera (`planDeQuema`). */
+  const rg = leerRegalo(texto, datos);
+  if(rg?.fichas){
+    const libres = 5 - v.monstruosRival.length;
+    if(libres < rg.cuerpos) return { p:0, por:"no le caben las fichas", lee };
+    const llena = libres === rg.cuerpos;
+    const pegan = v.monstruos.filter(x => !x.bocaAbajo && !x.defensa && (x.atkReal ?? x.datos?.attack ?? 0) > 1000).length;
+    const p = 0.2 + (llena ? 2.4 : 0) + Math.min(rg.cuerpos, pegan) * 0.25 * (rg.quemaAlMorir ? 1 : 0.5);
+    return { p, por: llena ? "sus fichas le llenan el campo: no puede invocar" : "fichas para el rival sin más", lee };
+  }
   const bits = ((datos?.type ?? 0) & 0x80000) ? razasQueSuben(texto) : 0;
   if(bits){
     const { mios, suyos, neto } = utilidadCampo(bits, v);

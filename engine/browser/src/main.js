@@ -6,6 +6,10 @@
 let ME = 0;   // lado que te toca; lo decide el sorteo
 let duel, decideAI, trivial, OCG, V, NAMES, DB;
 let chainMode = "auto", chainActive = false;
+/* Modo «cuando tiene sentido» (src/ventanas.js): ¿la ventana que viene es
+   la de justo después de que el rival invoque? Se enciende con su
+   invocación y se apaga cuando él vuelve a su Main Phase o cambia de fase. */
+let invocacionRival = false;
 /* ══ LA PRIORIDAD (reglas de 2005) ══
    Tras invocar, el motor te ofrece antes que al rival el efecto de
    ignición del monstruo (BLS, Chaos Sorcerer, Tribe-Infecting Virus,
@@ -38,6 +42,14 @@ let REMOTO = null;
    (navegador colgado, consola), contesta él por el invitado pasado un
    margen (`margenReloj`, 30 s, que cubre las animaciones y la red). */
 let TIEMPO_SALA = 0, RELOJ = null, POR_TIEMPO = false;
+/* ══ EL RELOJ DE LA RONDA (modo draft) ══
+   E: «45 min por ronda máx y luego turnos». `config.relojRonda` = { fin
+   (hora a la que se acaba la ronda, en ms), turnosExtra }. Cuando se
+   cumple, el turno en curso es el turno 0 y se juegan `turnosExtra` más;
+   al acabar, gana la partida quien tenga más LP (igual = empate). Ojo:
+   la Tournament Policy 2.5 de Konami ya no da turnos extra; esto es la
+   regla de la tienda de E, editable en el modo. */
+let RELOJ_RONDA = null, RELOJ_RONDA_TIC = null;
 let AGOTADOS = { 0:0, 1:0 };
 const MAX_AGOTADOS = 3;
 /* Solo pruebas: `GOAT_MARGEN_RELOJ_MS` acorta el margen y `GOAT_SIN_RELOJ`
@@ -360,8 +372,11 @@ async function drain(){
       case "turn":
         V.banner(`Turno ${e.turn} — ${e.player===ME?"Tú":"Oponente"}`,
                  e.player===ME?"var(--gold)":"#ff8f7a");
-        setHUD(e.player, duel.phase); await pausa(600); break;
+        setHUD(e.player, duel.phase); await pausa(600);
+        if(turnoConReloj()) return true;
+        break;
       case "phase":
+        invocacionRival = false;
         chainActive=false; V.ocultarReveladas(); V.setMomento(null);
         V.setPhase(e.phase); setHUD(duel.turnPlayer,e.phase);
         await V.announcePhase(e.phase, duel.turnPlayer===ME);
@@ -372,6 +387,7 @@ async function drain(){
           V.toast(`Desterrada: ${nm(e.code)}`);
         V.layoutAll(); await pausa(290); break;
       case "summon":
+        invocacionRival = duel.cards.get(e.uid)?.controller !== ME;
         V.alHistorial(e.code, duel.cards.get(e.uid)?.controller===ME,
                       e.kind==="flip" ? "volteo" : "invoca");
         if(e.uid){ V.glow(e.uid,true); V.layoutAll(); await pausa(400); V.glow(e.uid,false); }
@@ -502,7 +518,49 @@ function setHUD(player, phase){
   const extra = V?.momentoTexto?.() ? ` · <b style="color:#ffb257">${V.momentoTexto()}</b>` : "";
   document.getElementById("turnInfo").innerHTML =
     `<b style="color:${player===ME?"var(--gold)":"#ff8f7a"}">${T(player===ME?"TU TURNO":"TURNO RIVAL")}</b>`+
-    `<span style="opacity:.6"> · ${T(PHNAME[phase]??"")} · ${T("Turno "+duel.turnCount)}</span>${extra}`;
+    `<span style="opacity:.6"> · ${T(PHNAME[phase]??"")} · ${T("Turno "+duel.turnCount)}</span>${extra}${textoRelojRonda()}`;
+}
+function textoRelojRonda(){
+  if(!RELOJ_RONDA) return "";
+  if(RELOJ_RONDA.contados !== null)
+    return ` · <b style="color:#ff8f7a">${T("Tiempo")}: ${T("turno extra")} ${Math.max(0, RELOJ_RONDA.contados)}/${RELOJ_RONDA.extra}</b>`;
+  const ms = RELOJ_RONDA.fin - Date.now();
+  if(ms <= 0) return ` · <b style="color:#ff8f7a">${T("Tiempo")}: ${T("turno 0")}</b>`;
+  const sg = Math.ceil(ms / 1000);
+  return ` · <span style="opacity:.75">⏱ ${Math.floor(sg / 60)}:${String(sg % 60).padStart(2, "0")}</span>`;
+}
+/* Nuevo turno con la ronda cumplida: cuenta los turnos extra y, al pasar
+   el último, se acaba la partida por LP. Devuelve true si la ha acabado. */
+function turnoConReloj(){
+  if(!RELOJ_RONDA || Date.now() < RELOJ_RONDA.fin) return false;
+  if(RELOJ_RONDA.contados === null){
+    RELOJ_RONDA.contados = 0;
+    V.toast(T("Se acabó el tiempo de la ronda: se juegan") + ` ${RELOJ_RONDA.extra} ` + T("turnos más"));
+  }
+  RELOJ_RONDA.contados++;
+  logIt("reloj_ronda", { turnoExtra: RELOJ_RONDA.contados, lpTuyos: duel.lp[ME], lpRival: duel.lp[1-ME] });
+  if(RELOJ_RONDA.contados <= RELOJ_RONDA.extra) return false;
+  terminarPorTiempo();
+  return true;
+}
+function terminarPorTiempo(){
+  if(rendido) return;
+  rendido = true;
+  pararReloj();
+  const mio = duel?.lp?.[ME] ?? 0, suyo = duel?.lp?.[1-ME] ?? 0;
+  const empate = mio === suyo, ganaste = mio > suyo;
+  const motivo = empate ? "Tiempo: empate a puntos de vida" : "Tiempo: gana quien tiene más puntos de vida";
+  logIt("fin_por_tiempo", { lpTuyos: mio, lpRival: suyo, empate });
+  V.setHandlers({}); V.markTargets(new Set()); V.markDraggable(new Set());
+  V.markUsable(new Set()); V.markAtacadas?.(new Set()); V.quitarPrevia(false);
+  V.closeChoice(); V.closeZoneView(); hidePanel();
+  V.banner(empate ? "EMPATE" : ganaste ? "¡HAS GANADO!" : "HAS PERDIDO", empate ? "#cfd6e4" : ganaste ? "var(--gold)" : "#ff6a55");
+  const alTerminar = typeof CONFIG?.alTerminar === "function" ? CONFIG.alTerminar : null;
+  setTimeout(()=>V.pantallaFinal({
+    ganaste, motivo, lpMio:mio, lpRival:suyo, turnos:duel?.turnCount,
+    avatarMio:CONFIG?.avatarMio, avatarRival:CONFIG?.avatarRival, nombreRival:CONFIG?.nombreRival,
+    ...(alTerminar ? { textoNuevo:"Continuar",
+                       onNuevo: () => alTerminar(ganaste, { ...datosDelFinal(motivo), porTiempo:true, empate }) } : {}) }), 900);
 }
 
 /* ── panel inferior (solo para lo que no se puede arrastrar) ── */
@@ -1488,6 +1546,23 @@ async function loopInterno(){
         logIt("auto",{pregunta:"SELECT_CHAIN (ventana propia sin cadena)",respuesta:"no responder"});
         duel.respond({type:OCG.OcgResponseType.SELECT_CHAIN,index:null}); continue;
       }
+      /* ══ «CUANDO TIENE SENTIDO» (19-11) ══ Ver src/ventanas.js. */
+      if(q.type===OCG.OcgMessageType.SELECT_CHAIN && !q.forced && !disparadorPropio && !ventanaPrioridad
+         && chainMode==="sentido"){
+        const at = duel.atacante ? duel.cards?.get?.(duel.atacante.uid) ?? duel.atacante : null;
+        const v = valePreguntar(q, {
+          yo: ME, turnPlayer: duel.turnPlayer, fase: duel.phase,
+          atacante: at ? { controller: at.controller ?? duel.atacante.controller } : null,
+          cadena: (duel.cadena ?? []).map(x => ({ controller: x.controller, code: x.code })),
+          objetivos: duel.objetivosCadena ?? new Set(),
+          uidEn: s2 => duel.at(s2.controller, s2.location, s2.sequence)?.uid,
+          info: code => ({ nombre: NAMES[code]?.name, texto: NAMES[code]?.desc ?? "", tipo: Number(DB?.get?.(code)?.type ?? 0) }),
+          recienInvocadaRival: invocacionRival });
+        if(!v.preguntar){
+          logIt("auto",{pregunta:"SELECT_CHAIN (cuando tiene sentido)", respuesta:"no responder", motivo:v.motivo});
+          duel.respond({type:OCG.OcgResponseType.SELECT_CHAIN,index:null}); continue;
+        }
+      }
       // las que se resuelven solas (colocar zona, ordenar…) no son
       // preguntas de verdad: ensuciaban el log
       if(!AUTO_KINDS.has(q.type)) logIt("te_pregunta", { pregunta:msgName(q), datos:resumen(q) });
@@ -1523,6 +1598,7 @@ async function loopInterno(){
       catch(e){ logIt("rival_respuesta_rota", { msg:String(e?.message ?? e) }); duel.pending = q; preguntarOtraVezSala(q); }
       continue;
     }
+    if(q.type === OCG.OcgMessageType.SELECT_IDLECMD) invocacionRival = false;
     if(q!==aiLast){ aiLast=q; aiAttempt=0; }
     /* ── QUE SE LE VEA PENSAR ──
        El bot contestaba al instante y eso, además de no dar tiempo a leer
@@ -1715,6 +1791,11 @@ export async function boot({ createCore, Xns, GoatDuel, makeAutoPlayer, makeTriv
   const esInvitado = REMOTO?.rol === "invitado";
   TIEMPO_SALA = REMOTO ? Math.max(0, Number(config.remoto.tiempo) || 0) : 0;
   AGOTADOS = { 0:0, 1:0 }; POR_TIEMPO = false; pararReloj();
+  if(RELOJ_RONDA_TIC){ clearInterval(RELOJ_RONDA_TIC); RELOJ_RONDA_TIC = null; }
+  RELOJ_RONDA = config?.relojRonda?.fin ? { fin: Number(config.relojRonda.fin),
+    extra: Math.max(0, Number(config.relojRonda.turnosExtra ?? 3)), contados: null } : null;
+  if(RELOJ_RONDA && typeof setInterval === "function")
+    RELOJ_RONDA_TIC = setInterval(() => { if(duel && !duel.finished && !rendido) try{ setHUD(duel.turnPlayer, duel.phase); }catch(e){} }, 1000);
   /* Estado del duelo ANTERIOR fuera. En el Reino se juegan varios duelos
      seguidos sin recargar la página y esto se quedaba puesto: la cadena
      "activa", el temporizador de respuesta corriendo y el atacante del
@@ -1822,6 +1903,9 @@ export async function boot({ createCore, Xns, GoatDuel, makeAutoPlayer, makeTriv
   await View.sorteo(empiezasTu);
 
   cerebro = REMOTO ? null : crearCerebro({ X:OCG, duel, db:cardDb, names, nivel:nivelBot, yo:1-ME,
+    /* El modo draft le pasa el plan con el que se construyó su mazo: draft,
+       construcción y partida comparten el modelo (ver src/draft/mazo.js). */
+    planFijo: config?.planRival ?? null,
     /* Con el modo depuración encendido, la LECTURA del tablero sale en
        pantalla: es lo que E necesita para saber por qué el bot hace lo
        que hace mientras prueba. Sin depuración no se enseña —sería
@@ -1872,9 +1956,9 @@ export async function boot({ createCore, Xns, GoatDuel, makeAutoPlayer, makeTriv
   });
 
   const bc=document.getElementById("btnChain");
-  const CICLO={auto:"always", always:"nunca", nunca:"auto"};
-  const ETIQ_CAD={auto:"Cadenas: automáticas", always:"Cadenas: preguntar siempre",
-                  nunca:"Cadenas: no activar nada"};
+  const CICLO={auto:"sentido", sentido:"always", always:"nunca", nunca:"auto"};
+  const ETIQ_CAD={auto:"Cadenas: automáticas", sentido:"Cadenas: cuando tiene sentido",
+                  always:"Cadenas: preguntar siempre", nunca:"Cadenas: no activar nada"};
   const paintChain=()=>{ bc.textContent = T(ETIQ_CAD[chainMode] ?? ETIQ_CAD.auto);
                          bc.classList.toggle("peligro", chainMode==="nunca"); };
   bc.onclick=()=>{ chainMode = CICLO[chainMode] ?? "auto"; paintChain();

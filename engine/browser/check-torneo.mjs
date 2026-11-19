@@ -252,6 +252,7 @@ let GUARDADO_A_MEDIAS = null, CLAVE_R1 = null;
     document.getElementById("irTorneo").onclick?.();
     es(document.getElementById("pTorneo").hidden === false, "«Torneo suizo» abre su pantalla");
     es(!!nodo("tInscribir") && !!nodo("tMiMazo"), "sin torneo, sale la inscripción: mazo y botón");
+    es(!!nodo("tAvatares"), "y deja elegir tu avatar (19-11)");
     const pedidos = [];
     globalThis.__LANZAR_TORNEO__ = p => pedidos.push(p);
     const tandaAntes = P.estado.tanda ?? 1;
@@ -277,6 +278,13 @@ let GUARDADO_A_MEDIAS = null, CLAVE_R1 = null;
     const yo = S.jugadores.find(j => j.yo), m1 = S.rondas[0].find(m => m.a === yo.id || m.b === yo.id);
     const riv1 = S.jugadores.find(j => j.id === (m1.a === yo.id ? m1.b : m1.a));
     es(c1?.nombreRival === riv1.nombre && rival1.includes(riv1.nombre), "contra el bot que te ha tocado, por su nombre");
+    /* 19-11, la comunidad: «siempre eres Yugi y el rival siempre Fake Kaiba
+       o Roland». Cada bot lleva su cara, y no es ni la tuya ni la de Roland. */
+    const caras = new Set(S.jugadores.filter(j => !j.yo).map(j => j.avatar));
+    es(S.jugadores.filter(j => !j.yo).every(j => j.avatar && j.avatar !== "roland" && j.avatar !== yo.avatar) && caras.size >= 20,
+       "cada bot lleva su cara (ni la tuya ni la de Roland)", `${caras.size} caras distintas`);
+    es(!!riv1.avatar && c1?.avatarRival?.src === P.avatarSrc(riv1.avatar) && c1.avatarRival.src !== P.avatarSrc("roland"),
+       "y el duelo lleva la cara de ese bot");
     es(P.estado.actual?.suizo && P.estado.actual?.registro?.mio?.side?.length === 15, "el match lleva su mesa y tu mazo registrado");
 
     c1.alTerminar(false, { empece:true, turnos:9, lpMio:0, lpRival:5200, log:"REGISTRO PARTIDA 1" });

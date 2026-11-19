@@ -88,8 +88,25 @@ export const CARTAS = {
      que sin poder atacar ese turno no hace nada. */
   "Tsukuyomi":           { rol:"trick", valor:1.4, espiritu:true, efectoAlInvocar:true, soloCaraArriba:true,
                            nota:"Reutiliza tus flip y desactiva monstruos rivales" },
-  "Thousand-Eyes Restrict":{ rol:"lock", valor:2.0, cuando:"conObjetivoBueno", prioritario:true,
+  "Thousand-Eyes Restrict":{ rol:"lock", valor:2.0, cuando:"conObjetivoBueno", prioritario:true, absorbe:true,
                            nota:"Sin un monstruo rival fuerte que absorber, no compensa. Enfrente: bloquea ataques y cambios de posición, hay que quitarlo antes que nada" },
+  /* Relinquished (19-11, E): «la IA ve que relinquished es un 0/0 y no
+     lee el efecto». Cada turno se lleva un monstruo del rival como
+     equipo, copia su ATK/DEF, el equipo muere en su lugar en combate y el
+     daño que recibe se le devuelve al otro. Es el mismo tipo de carta que
+     el TER: una LLAVE del tablero, no un cuerpo de 0. */
+  "Relinquished":        { rol:"lock", valor:2.0, cuando:"conObjetivoBueno", prioritario:true, absorbe:true,
+                           nota:"Absorbe un monstruo rival por turno; enfrente hay que quitarlo antes que nada (Book of Moon le rompe el equipo)" },
+  /* El ritual de Relinquished. Sin esta fila el texto («This card is used
+     to Ritual Summon…») no decía nada a `lectura.js`, valía cero y el mazo
+     de Relinquished no lo sacaba NUNCA: medido, 0 por partida (19-11). */
+  /* Buscan al ser INVOCADOS (normal o por volteo): colocados no hacen
+     nada hasta que alguien los voltee. El mazo de Relinquished los
+     colocaba y perdía un turno de búsqueda (19-11). */
+  "Manju of the Ten Thousand Hands":{ rol:"beater", valor:1.3, efectoAlInvocar:true, buscaAlInvocar:true },
+  "Senju of the Thousand Hands":    { rol:"beater", valor:1.3, efectoAlInvocar:true, buscaAlInvocar:true },
+  "Sonic Bird":                     { rol:"beater", valor:1.0, efectoAlInvocar:true, buscaAlInvocar:true },
+  "Black Illusion Ritual":{ rol:"invocador", valor:1.0, invoca:"Relinquished", ritual:true },
   "Metamorphosis":       { rol:"fusion", valor:1.4, cuando:"conObjetivoBueno" },
   /* Las fichas de Scapegoat no son cartas: no cuestan nada y son justo el
      combustible de Metamorphosis. Valían 1.0 como cualquier desconocida y
@@ -117,6 +134,14 @@ export const CARTAS = {
   "Sangan":              { rol:"floater", valor:1.2, noColocar:true,
                            nota:"Colocado muere a Nobleman; se usa atacando" },
   "Mystic Tomato":       { rol:"floater", valor:1.1 },
+  /* Los reclutadores de atributo que faltaban (19-11): Shining Angel no
+     contaba como floater y matarlo «gratis» valía igual que un cuerpo. */
+  "Shining Angel":       { rol:"floater", valor:1.1, recurrente:true },
+  "Mother Grizzly":      { rol:"floater", valor:1.1, recurrente:true },
+  "UFO Turtle":          { rol:"floater", valor:1.1, recurrente:true },
+  "Flying Kamakiri #1":  { rol:"floater", valor:1.1, recurrente:true },
+  "Howling Insect":      { rol:"floater", valor:1.0, recurrente:true },
+  "Masked Dragon":       { rol:"floater", valor:1.1, recurrente:true },
   /* 400 de ataque que pegan con 3400. Reportado por E: el bot le atacó
      «porque 400 es poco» y perdió el monstruo. `atkSiPaga` lo mira
      `evaluar.js` cuando se decide un ataque, contando los LP de su

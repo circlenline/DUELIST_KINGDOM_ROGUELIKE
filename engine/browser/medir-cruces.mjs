@@ -57,8 +57,15 @@ const pares = [];
 for(let i=0;i<MAZOS.length;i++) for(let j=i+1;j<MAZOS.length;j++) pares.push([i,j]);
 const mios = pares.filter((_, k) => k % TROZOS === TROZO);
 const salida = { n:N, mazos:MAZOS.map(m => m.nombre), cruces:{} };
+/* Si el trozo ya estaba empezado con los mismos mazos y el mismo N, se
+   sigue donde se quedó: una tanda cortada a medias no se repite entera. */
+try{
+  const previo = JSON.parse(readFileSync(`../data/cruces-${TROZO}.json`, "utf-8"));
+  if(previo.n === N && JSON.stringify(previo.mazos) === JSON.stringify(salida.mazos)) Object.assign(salida.cruces, previo.cruces);
+}catch(_){}
 const t0 = Date.now();
 for(const [i,j] of mios){
+  if(salida.cruces[`${i}-${j}`]) continue;
   let gi = 0, tablas = 0;
   for(let k=0;k<N;k++){
     /* Se alterna el asiento: en el motor el jugador 0 no siempre empieza,

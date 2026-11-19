@@ -21,8 +21,8 @@ import { atk, def, poder, valorCarta, rolDe, infoDe, evaluar, ventaja,
 import { canon, conocer } from "./knowledge.js";
 import { leerPosicion, decidirReserva, regalaChaos, letalEnBatalla, quitarJinzoLeAyuda, dañoQueHago } from "./posicion.js";
 import { contextoEstrategico, riesgoSobreextension } from "./contexto.js";
-import { planDe } from "./plan.js";
-import { utilidadLeida, leerCarta } from "./lectura.js";
+import { planDe, materializarPlan } from "./plan.js";
+import { utilidadLeida, leerCarta, leerAlMorir, leerProteccion, quemaMedible, leerRegalo } from "./lectura.js";
 import { valorar, delta, efectoDe, aplicar } from "./valorar.js";
 
 /* Combinaciones de cartas cuyos valores suman lo que pide el motor: los
@@ -64,7 +64,7 @@ export function combinacionesSuma(m){
 export const NIVELES = ["novato","normal","duro","experto"];
 const RANGO = { novato:0, normal:1, duro:2, experto:3 };
 
-export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, lastre:lastreExtra, rng }){
+export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, lastre:lastreExtra, rng, planFijo = null }){
   /* ── EL AZAR DEL CEREBRO, INYECTABLE ──
      Todas las tiradas del bot (lastres de nivel, desempates) salen de aquí.
      Por defecto es Math.random, así que en el juego no cambia nada. Con
@@ -192,7 +192,8 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
     const lista = duel.decklist?.[yo] ?? [];
     if(PLAN && !lista.length) return;
     planConMazo = lista.length > 0;
-    PLAN = construirPlan(planDe(lista, names));
+    /* `planFijo`: el plan con el que se construyó el mazo (modo draft). */
+    PLAN = construirPlan(planFijo ? materializarPlan(planFijo) : planDe(lista, names));
     if(!planConMazo) return;               // se traza cuando de verdad se sabe
     traza(`plan: ${PLAN.nombre} — ${PLAN.condicion}`);
     /* El guion, en el log. Es donde se lee si el bot lo está siguiendo. */
@@ -239,6 +240,38 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
   const SACA_FLOATER = { "Pyramid Turtle":2400, "Giant Rat":1500, "Mystic Tomato":1400, "Shining Angel":1400,
     "Howling Insect":1500, "UFO Turtle":1500, "Mother Grizzly":1400, "Flying Kamakiri #1":1500, "Masked Dragon":1600 };
   const loQueSacaFloater = c => SACA_FLOATER[canon(c?.nombre ?? "")] ?? 1500;
+  /* ══ QUÉ PUEDE SACAR CADA FLOATER DE MI MAZO (19-11) ══
+     E: «¿es capaz de entender que si crashea su floater, aunque coma
+     daño, puede buscar una carta en su deck que resuelva la mesa?».
+     Para eso hay que saber QUÉ sale. El mazo propio lo conoce (`v.mazo`:
+     la decklist menos lo ya visto), y cada floater tiene su filtro. Lo
+     que no se puede invocar de forma especial (Gigantes, Chaos Sorcerer)
+     no sale al campo; Sangan lo trae a la mano, eso sí. */
+  const FILTRO_FLOATER = {
+    "Giant Rat":{ attr:0x01, atk:1500 }, "Mother Grizzly":{ attr:0x02, atk:1500 },
+    "UFO Turtle":{ attr:0x04, atk:1500 }, "Flying Kamakiri #1":{ attr:0x08, atk:1500 },
+    "Shining Angel":{ attr:0x10, atk:1500 }, "Mystic Tomato":{ attr:0x20, atk:1500 },
+    "Howling Insect":{ race:0x800, atk:1500 }, "Masked Dragon":{ race:0x2000, atk:1500 },
+    "Pyramid Turtle":{ race:0x10, def:2000 }, "Sangan":{ atk:1500, aMano:true },
+  };
+  const reclutables = (v, c) => {
+    const f = FILTRO_FLOATER[canon(c?.nombre ?? "")];
+    if(!f) return [];
+    const out = [];
+    for(const [code, cu] of (v.mazo ?? [])){
+      if(!(cu > 0)) continue;
+      const d = db.get(Number(code));
+      if(!d || !((Number(d.type) || 0) & 0x1)) continue;
+      if(f.attr && !((Number(d.attribute) || 0) & f.attr)) continue;
+      if(f.race && !(Number(d.race ?? 0) & f.race)) continue;
+      if(f.atk != null && (Number(d.attack) || 0) > f.atk) continue;
+      if(f.def != null && (Number(d.defense) || 0) > f.def) continue;
+      const txt = names[Number(code)]?.desc ?? "";
+      if(!f.aMano && /cannot be (normal )?summoned|must (first )?be special summoned|cannot be special summoned/i.test(txt)) continue;
+      out.push({ code:Number(code), nombre: names[Number(code)]?.name ?? null, datos:d });
+    }
+    return out;
+  };
   /* ¿Mi mazo ES el bucle de voltear y re-tapar (PACMAN)? Medido con
      duelo-versiones: quitar el freno de giros a los que se re-tapan sube
      PACMAN del 50 % al 65 %, y el mismo cambio en Clown Control (tres Des
@@ -330,6 +363,25 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
      no atacaba —porque no sabía si ganaba— y el duelo se atascaba hasta el
      turno 60. Un monstruo tapado también estorba: si no hay nada a cara
      descubierta, cuenta como amenaza. */
+  /* ══ LAS LLAVES DEL TABLERO (19-11) ══
+     E: «la partida está en mi control por tener estos monstruos en el
+     campo, y la IA tiene respuestas en mano (Book of Moon, trampas,
+     Tsukuyomi, Chaos) pero escoge limpiar otro monstruo». La causa: al
+     ELEGIR OBJETIVO la nota era `max(poder, golpe)/1000`, así que un
+     Relinquished de 0 o un TER que absorbió un 1400 perdían contra
+     cualquier 1900. `amenazaMayor` ya ponía los candados primero; la
+     elección del objetivo no se enteraba. Lo que vale una llave no está
+     en su ATK: el TER no me deja atacar ni cambiar de posición, el
+     Relinquished se lleva un monstruo mío cada turno. */
+  const ABSORBEN = new Set(["Thousand-Eyes Restrict", "Relinquished"]);
+  const llaveRival = c => {
+    if(!exp("llaves") || !c || c.bocaAbajo) return 0;
+    const nom = canon(c.nombre ?? "");
+    if(nom === "Thousand-Eyes Restrict") return 3.5;
+    if(nom === "Relinquished") return 3.0;
+    if(infoDe(c).prioritario && ((Number(c.datos?.type) || 0) & 0x1)) return 1.2;
+    return 0;
+  };
   const amenazaMayor = v => {
     const caraArriba = v.monstruosRival.filter(c=>!c.bocaAbajo);
     /* PRIMERO LOS CANDADOS. Es el concepto que WindBot llama "floodgate" y
@@ -373,7 +425,12 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
      caso "monstruo normal de 0/0", que es lo que son todas. */
   const esFicha = c => valorCarta(c) <= 0.2
     || !!((c?.datos?.type ?? 0) & 0x4000)
-    || (!!((c?.datos?.type ?? 0) & 0x1) && atk(c) === 0 && def(c) === 0);
+    /* «Monstruo NORMAL de 0/0»: el comentario lo decía y el código no.
+       Sin mirar el bit de efecto, un Relinquished sin equipo o un TER sin
+       nada absorbido eran «fichas», y la remoción se vetaba sola delante
+       de la carta que más había que quitar (E, 19-11: «ve que relinquished
+       es un 0/0 y no lee el efecto»). */
+    || (!!((c?.datos?.type ?? 0) & 0x1) && !((c?.datos?.type ?? 0) & 0x20) && atk(c) === 0 && def(c) === 0);
   const esMuro  = c => !c.bocaAbajo && c.defensa && def(c) >= 1700 && atk(c) <= 1200;
   /* Las fichas de Scapegoat no se pueden tributar para una invocación por
      tributo (lo dice la carta). */
@@ -447,6 +504,9 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
       if(x.mioRobado){ out.push({ uid:x.uid, valor:-3, por:"es mío robado: se quedaría con él" }); continue; }
       let valor = 0, por = [];
       if(nom === "Thousand-Eyes Restrict"){ valor += 4 + atk(x)/1000; por.push("TER boca abajo pierde su efecto"); }
+      /* Relinquished boca abajo pierde el equipo (lo que me quitó va al
+         cementerio) y no vuelve a absorber hasta que lo voltee. */
+      if(exp("llaves") && nom === "Relinquished"){ valor += 3.5 + atk(x)/1000; por.push("Relinquished boca abajo suelta el equipo y no absorbe"); }
       const ixv = infoDe(x);
       /* Dream Clown, Crass Clown y Blade Rabbit boca arriba en ataque
          destruyen al pasar a defensa en SU turno: tumbarlos les quita
@@ -458,7 +518,9 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
       /* Un volteo boca arriba se mata mejor DE FRENTE: tapado, al atacarlo
          se voltea y su efecto sale otra vez. */
       if(conBatalla && !esVolteo && atacantes.some(a => atk(a) > def(x))){ valor += 1.5 + valorCarta(x); por.push(`tapado muere en combate (DEF ${def(x)})`); }
-      if(v.mano.some(h => canon(h.nombre ?? "")==="Nobleman of Crossout")){ valor += 1.0; por.push("y Nobleman lo destierra"); }
+      /* Nobleman solo suma si NO lo mato pegándole (19-11, el plan de Kycoo). */
+      if(v.mano.some(h => canon(h.nombre ?? "")==="Nobleman of Crossout")
+         && !(exp("tsukMata") && conBatalla && atacantes.some(a => atk(a) > def(x)))){ valor += 1.0; por.push("y Nobleman lo destierra"); }
       if(infoDe(x).espiritu) valor += 0.3;
       /* Tumbarle un volteo es regalárselo otra vez (guía P03): aunque lo
          mate en combate, al atacarlo se voltea y su efecto sale. */
@@ -479,6 +541,19 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
         if(quedan){ out.push({ uid:x.uid, valor: 3 + mejorBlanco + quedan*0.3, por:`${x.nombre} otra vez boca arriba: su destierro vuelve` }); continue; }
       }
       const inf = infoDe(x);
+      /* ══ MAGICIAN OF FAITH CON UNA MÁGICA GORDA EN EL CEMENTERIO (19-11) ══
+         E: «Magician of Faith u otros volteos con mucho value». El motor no
+         deja voltearla otra vez el mismo turno (check-tsukuyomi, caso 4),
+         pero re-tapada recupera otra mágica el turno siguiente: con Pot of
+         Greed, Graceful Charity o Heavy Storm abajo, eso es una carta más. */
+      if(exp("mofRecarga") && nom === "Magician of Faith"){
+        const mejorMagia = Math.max(0, ...v.cementerio.filter(g => (Number(g.datos?.type) || 0) & 0x2).map(g => valorCarta(g)));
+        if(mejorMagia >= 1.6){
+          out.push({ uid:x.uid, valor: 1.2 + mejorMagia/2 - (suyosArriba.length ? 0.8 : 0),
+                     por:"re-tapo Magician of Faith: el turno que viene recupera otra mágica" });
+          continue;
+        }
+      }
       if(inf.rol === "flip" || inf.colocarPreferente){
         /* «Re use flips» (captura de E): re-tapado, el volteo vuelve a
            servir el turno siguiente. Un motor de volteo (Des Lacooda,
@@ -487,9 +562,38 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
            tumbar lo suyo pierde partidas. Solo si no hay nada suyo. */
         out.push({ uid:x.uid, valor: suyosArriba.length ? -1.5 : 0.8, por:"re-tapo mi volteo para usarlo otra vez" }); continue;
       }
+      /* ══ MI TER TAMBIÉN ME CIERRA A MÍ (19-11) ══
+         E: «a lo mejor darle la vuelta con Book of Moon, pegar con cosas y
+         en Main 2 voltear el TER y hacer su efecto». El TER no deja atacar
+         a NINGÚN otro monstruo, también los míos. Tumbarlo en mi Main 1
+         abre la batalla; lo que absorbió se va al cementerio, y en la
+         Main 2 se puede invocar por volteo y absorber otra vez. Solo si
+         lo que ganan mis atacantes paga lo que se pierde. */
+      if(exp("terPropio") && nom === "Thousand-Eyes Restrict" && conBatalla && volteoLegalYa(v, x)){
+        const otros = atacantes.filter(a => a.uid !== x.uid);
+        if(otros.length){
+          let daño = 0, muertes = 0;
+          const suyos = v.monstruosRival;
+          if(!suyos.length) daño = otros.reduce((s, a) => s + atk(a), 0);
+          else {
+            const libres = [...suyos];
+            for(const a of [...otros].sort((p1, p2) => atk(p2) - atk(p1))){
+              const k = libres.findIndex(r => !r.bocaAbajo && r.uid !== x.uid && ganaCombate(a, r) && !muereAtacando(a, r));
+              if(k >= 0){ muertes++; if(!libres[k].defensa) daño += atk(a) - atk(libres[k]); libres.splice(k, 1); }
+            }
+          }
+          const letal = daño >= (v.lp?.rival ?? Infinity);
+          const valor = letal ? 9 : daño/1000*1.2 + muertes*1.5 - atk(x)/1000*0.6 - 1.2;
+          if(valor > 0){
+            out.push({ uid:x.uid, valor, propioTER:true,
+                       por:`tumbo mi TER: ${letal ? "mis atacantes rematan" : `pegan ${daño}${muertes ? ` y matan ${muertes}` : ""}`}; en la Main 2 lo vuelvo a voltear` });
+            continue;
+          }
+        }
+      }
       /* Tsukuyomi a sí misma se queda tapada y NO vuelve a la mano: pierde
          la invocación que se repite cada turno. Es el último recurso. */
-      if(nom === "Tsukuyomi"){ out.push({ uid:x.uid, valor:-2, por:"se queda tapada (y no vuelve a la mano)" }); continue; }
+      if(nom === "Tsukuyomi"){ out.push({ uid:x.uid, valor: exp("tsukNunca") ? -4 : -2, por:"se queda tapada (y no vuelve a la mano)" }); continue; }
       out.push({ uid:x.uid, valor:-3, por:"tumbar lo mío no da nada" });
     }
     return out.sort((a,b)=>b.valor-a.valor);
@@ -732,7 +836,36 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
     const techoRival = Math.max(0, ...v.monstruosRival.filter(c=>!c.bocaAbajo).map(c=>atk(c)));
     (m.summons||[]).forEach((l,i)=>{
       const c = cartaDeLista(l), inf = infoDe(c);
+      /* Blade Knight pega con 2000 si me queda una carta o ninguna en la
+         mano: es lo que le pasa nada más invocarlo (14-11, examen). */
+      if(exp("tempo") && canon(c.nombre ?? "") === "Blade Knight" && (v.mano?.length ?? 0) - 1 <= 1 && c.atkReal == null)
+        c.atkReal = (c.datos?.attack ?? 1600) + 400;
       let p = 3 + atk(c)/1000, por = `invocar ${c.nombre}`;
+      /* ══ TRIBE-INFECTING VIRUS NO ES UN CUERPO (14-11) ══
+         E: «Snatch Steal y Tribe… han de guardarse para esos momentos».
+         El examen: la IA lo invocaba donde los pros no en 364 posiciones,
+         252 de ellas sin un solo monstruo suyo boca arriba que destruir.
+         Sin objetivo, se guarda; sale como cuerpo solo si remata o si el
+         reloj aprieta (`prisa`). */
+      if(exp("tivMomento") && canon(c.nombre ?? "") === "Tribe-Infecting Virus"
+         && !v.monstruosRival.some(r => !r.bocaAbajo && !esFicha(r)) && prisa < 1.2
+         && !(m.to_bp && v.monstruosRival.length === 0 && atk(c) >= v.lp.rival)){
+        p = Math.min(p, 0.6); firme(IA.SELECT_SUMMON, i);
+        por += " (sin nada suyo boca arriba que destruir: el Virus se guarda para cuando cambie la partida)";
+        añadir(p, IA.SELECT_SUMMON, i, por);
+        return;
+      }
+      /* …y CON objetivo, invocarlo es la jugada: lo que vale es su efecto
+         nada más entrar (descartar un monstruo y llevarse un tipo entero),
+         no sus 1600. Antes se puntuaba como un cuerpo cualquiera y salía
+         por debajo de colocar una Spy. */
+      if(exp("tivMomento") && canon(c.nombre ?? "") === "Tribe-Infecting Virus"){
+        const t = mejorTipoTIV(v, c.uid);
+        const descartes = v.mano.filter(h => h.uid !== c.uid && ((Number(h.datos?.type) || 0) & 0x1));
+        const coste = descartes.length ? Math.min(...descartes.map(h => canon(h.nombre ?? "") === "Sinister Serpent" ? 0.1 : valorCarta(h))) : 9;
+        const neto = t ? t.gana - t.pierde - coste * 0.6 : -1;
+        if(neto > 0.2){ p += 1.2 + neto * 1.5; por += ` (entra y se lleva ${t.nombre})`; }
+      }
       /* ¿SOBREVIVE A SU TURNO? Palabras de E: "la IA a veces invoca en
          ataque por invocar, sin darse cuenta de que yo tengo un monstruo
          con más ataque y que le haré daño al siguiente turno". El bot
@@ -761,7 +894,16 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
          tumba a sí misma (R2 p1 T16 del 20-09). Ver `planTumbar`. */
       if(exp("tsukPlan") && canon(c.nombre ?? "") === "Tsukuyomi"){
         const obj = planTumbar(v, { conBatalla: !!m.to_bp && v.fase === 0x4 })[0];
-        if(!obj || obj.valor < 0.8){ if(exp("tsukSinObjetivo")){ p -= 1.2; por += " (no hay nada que valga la pena tumbar)"; } }
+        if(!obj || obj.valor < 0.8){ if(exp("tsukSinObjetivo")){ p -= 1.2; por += " (no hay nada que valga la pena tumbar)"; }
+          /* ══ TSUKUYOMI SIN OBJETIVO SE TUMBA A SÍ MISMA (14-11) ══
+             E: «Tsukuyomi a sí misma sin aportar nada». Su efecto es
+             obligatorio: sin otro monstruo boca arriba que valga la pena
+             (las fichas de Scapegoat no se pueden poner boca abajo), al
+             invocarla se tumba ella. Queda una tapada de 1400 sin atacar:
+             exactamente lo que da COLOCARLA, pero enseñando la carta.
+             Medido en 150 partidas: 126 Tsukuyomi sobre sí misma. Invocarla
+             así es una jugada dominada: veto firme. */
+          if(exp("tsukSola")){ p = Math.min(p, 0.1); firme(IA.SELECT_SUMMON, i); por += " (se tumbaría a sí misma: colocada es lo mismo sin enseñarla)"; } }
         else { if(exp("tsukInvocar")) p += Math.min(3, obj.valor) * 0.25; por += ` (tumba: ${obj.por})`;
                /* Reutilizar un destierro de Chaos o quedarme lo robado es
                   una carta más por reglas: la simulación no lo discute. */
@@ -773,7 +915,14 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
       /* Perforar, robar al golpear o atacar a todos solo «hacen algo» si
          este turno hay un golpe que dar (E, 02-10: Airknight de frente
          delante de una Lily que pega con 3400). */
-      const haceAlgoAlEntrar = inf.rompeBackrow || inf.efectoAlInvocar || inf.invoca
+      /* ══ POR TEMPO (14-11) ══
+         E: «esas invocaciones muchas veces se harán por tempo». Los pros
+         invocan de frente D.D. Warrior Lady (74 %) y D.D. Assailant (81 %):
+         su combate destierra a lo que toquen, así que delante de algo que
+         vale más que ellos, de frente es un cambio a favor y no un regalo. */
+      const cambioAFavor = exp("tempo") && inf.rol === "trade" && !!m.to_bp
+        && v.monstruosRival.some(r => !r.bocaAbajo && (valorCarta(r) > valorCarta(c) || atk(r) >= 1900));
+      const haceAlgoAlEntrar = inf.rompeBackrow || inf.efectoAlInvocar || inf.invoca || cambioAFavor
         || ((inf.atacaTodos || inf.perfora || inf.robaAlGolpear) && (!exp("amenazaReal") || puedePegarYa0))
         || ["removal","buscador","fusion"].includes(inf.rol);
       /* Y tampoco cuenta si el monstruo va a hacer daño ESTE turno. Cambiar
@@ -1071,6 +1220,36 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
     (m.special_summons||[]).forEach((l,i)=>{
       const c = cartaDeLista(l), inf = infoDe(c);
       let p = 4.5 + atk(c)/1000, por = `inv. especial ${c.nombre}`;
+      /* ══ UN MONSTRUO QUE VA AL CAMPO DEL RIVAL (01-11) ══
+         Lava Golem se invoca en SU campo tributando dos monstruos suyos.
+         Se puntuaba como «un 3000 para mí» y se regalaba sin nada que lo
+         frenara. Lo que vale es: lo que le quito (los dos tributos, que
+         elijo yo), menos lo que le doy (un 3000 que me pega, salvo que un
+         Gravity Bind, Level Limit o Messenger of Peace boca arriba se lo
+         impida), más lo que le quema cada Standby. */
+      const rgLava = exp("regalos") ? leerRegalo(textoDe(c), c.datos) : null;
+      if(rgLava && !rgLava.fichas){
+        const golem = { datos:{ level: rgLava.nivel, attack: rgLava.atk }, atkReal: rgLava.atk };
+        const bloqueado = !puedePegarme(v)(golem);
+        const tributos = v.monstruosRival
+          .map(x => {
+            const am = x.bocaAbajo ? null : leerAlMorir(textoDe(x));
+            const repone = am && am.enCombate === false ? 0.8 : 0;      // Sangan busca igual
+            return (x.bocaAbajo ? 1.25 : valorCarta(x) + poder(x) / 2000) - repone;
+          })
+          .sort((a, b) => b - a).slice(0, 2);
+        const quito = tributos.reduce((t, x) => t + x, 0);
+        const miDefensa = v.monstruos.filter(x => !x.bocaAbajo).reduce((mx, x) => Math.max(mx, poder(x)), 0);
+        const doy = bloqueado ? 0.6 : 2.4 + Math.max(0, rgLava.atk - miDefensa) / 1500;
+        const quema = rgLava.quemaPorTurno ? (bloqueado ? 1.4 : 0.4) * rgLava.quemaPorTurno / 1000 : 0;
+        const sinNormal = ((m.summons?.length ?? 0) + (m.monster_sets?.length ?? 0)) ? 0.3 : 0;
+        p = quito * 1.1 + quema - doy - sinNormal;
+        por += ` (va a SU campo: le quito ${quito.toFixed(1)}, le doy un ${rgLava.atk}`
+             + `${bloqueado ? " que no puede atacar" : " que me pega"}${quema ? `, y le quema ${rgLava.quemaPorTurno} por turno` : ""})`;
+        if(!bloqueado) firme(IA.SELECT_SPECIAL_SUMMON, i);
+        añadir(p, IA.SELECT_SPECIAL_SUMMON, i, por);
+        return;
+      }
       /* Una invocación especial es gratis en invocación normal, pero no en
          recursos: BLS y Chaos Sorcerer gastan combustible del cementerio y
          son el finisher. Si no quitan nada ahora ni dan letal, entran como
@@ -1128,6 +1307,12 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
     (m.monster_sets||[]).forEach((l,i)=>{
       const c = cartaDeLista(l), inf = infoDe(c);
       let p = 1.6, por = `colocar ${c.nombre}`;
+      /* Colocado, el Virus no hace nada: su efecto pide estar boca arriba. */
+      if(exp("tivMomento") && canon(c.nombre ?? "") === "Tribe-Infecting Virus" && prisa < 1.2){
+        añadir(0.3, IA.SELECT_MONSTER_SET, i, `${por} (colocado no destruye nada: se guarda)`);
+        firme(IA.SELECT_MONSTER_SET, i);
+        return;
+      }
       if(inf.colocarPreferente) p += 1.6;               // los flip quieren ser colocados
       if(inf.prefiereSet) p += 1.4;                     // y estas todavía más
       /* `noColocar` era un -3.0 que los demás bonus se comían: colocar un
@@ -1154,6 +1339,18 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
       if(exp("muroDeCara") && ((inf.espiritu && !inf.efectoAlInvocar)
           || /send this face-up card/i.test(names[c.code]?.desc ?? ""))){
         p -= 1.2; por += " (su valor es boca arriba: colocada es un muro que muere)";
+      }
+      /* ══ EXILED FORCE NO ES UN MURO (14-11) ══
+         Examen contra los pros: Exiled Force se invoca en 89 de 94 casos
+         y la IA la colocaba en uno de cada tres (4.1 colocada contra 4.0
+         invocada, empate a ojo). Su efecto —sacrificarla para destruir un
+         monstruo— pide que esté boca arriba: colocada es un 1000/1000 que
+         tarda un turno en servir. Lo mismo cualquier monstruo cuyo texto
+         empiece por sacrificarse a sí mismo y no sea de volteo. */
+      if(exp("exiledDeCara") && !inf.colocarPreferente && inf.rol !== "flip"
+         && /(^|\. )(You can )?Tribute this card(;|,| to )/i.test(names[c.code]?.desc ?? "")
+         && !/FLIP:/.test(names[c.code]?.desc ?? "")){
+        p -= 1.2; por += " (su efecto es boca arriba: sacrificarse para destruir)";
       }
       if(exp("material") && inf.soloMaterial) p -= 6;   // Thunder Dragon: ni de cara ni tapado
       /* ══ MAGICIAN OF FAITH, CUANDO HAY QUÉ RECUPERAR ══
@@ -1287,6 +1484,41 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
       if(exp("letal") && inf.noAtacaTrasEfecto && Number(l.location) === 4
          && m.to_bp && v.turnoMio && letalEnBatalla(v)){
         añadir(0.05, IA.SELECT_ACTIVATE, i, `${por} (atacando gano ya: el efecto me quita el ataque)`);
+        return;
+      }
+      /* ══ EL DESTIERRO DE BLACK LUSTER SOLDIER (14-11) ══
+         E: «con BLS, haciendo el efecto a sus propios monstruos». Su efecto
+         no tenía nota propia: lo leía `lectura.js` y salía 2,8 SIEMPRE,
+         hubiera o no algo suyo en la mesa; con su campo vacío, el único
+         objetivo legal era mío. Medido en 150 partidas: 16 destierros de
+         BLS sobre lo propio (Breaker, fichas, el propio BLS).
+         Vale lo que destierra, y se compara con lo que pierde: ese turno
+         BLS no ataca. Si en batalla se lleva lo mismo —todo lo suyo boca
+         arriba, que muere en combate, no es un floater ni D.D. Warrior Lady,
+         y sin backrow suyo tapado que pare el ataque—, se ataca (y con su
+         segundo ataque). Desterrar gana a matar contra los floaters, lo
+         inmune en combate (Spirit Reaper) y lo tapado. */
+      if(exp("blsDestierro") && Number(l.location) === 4 && nom === "Black Luster Soldier - Envoy of the Beginning"){
+        const suyos = v.monstruosRival.filter(r => !esFicha(r));
+        if(!suyos.length){
+          añadir(0.02, IA.SELECT_ACTIVATE, i, `${por} (nada suyo que desterrar: el único objetivo sería mío)`);
+          firme(IA.SELECT_ACTIVATE, i); return;
+        }
+        const valeDesterrar = r => valorCarta(r) + (r.bocaAbajo ? 0.4 : atk(r) / 2000)
+          + (rolDe(r) === "floater" || infoDe(r).inmuneCombate ? 0.8 : 0) + (r.bocaAbajo ? 0.3 : 0);
+        const mejor = suyos.reduce((a, r) => valeDesterrar(r) > valeDesterrar(a) ? r : a, suyos[0]);
+        const bls = v.monstruos.find(x => x.uid === cartaDeLista(l).uid) ?? cartaDeLista(l);
+        const loMataEnBatalla = suyos.every(r => !r.bocaAbajo && rolDe(r) !== "floater" && !infoDe(r).inmuneCombate && !infoDe(r).peligroso
+                                                 && ganaCombate(bls, r, v.lp.rival));
+        /* …y si no tiene nada tapado atrás que pare el ataque (Book of Moon,
+           Sakuretsu, Mirror Force): con backrow, el destierro de ahora es
+           seguro y el combate no. */
+        const atrasTapado = (v.backrowRival ?? []).some(x => x.bocaAbajo);
+        if(m.to_bp && v.turnoMio && loMataEnBatalla && !atrasTapado){
+          añadir(0.6, IA.SELECT_ACTIVATE, i, `${por} (en batalla se lleva lo mismo y ataca otra vez: no se destierra)`);
+          firme(IA.SELECT_ACTIVATE, i); return;
+        }
+        añadir(2.0 + valeDesterrar(mejor), IA.SELECT_ACTIVATE, i, `${por} (destierra ${mejor.bocaAbajo ? "una tapada" : mejor.nombre})`);
         return;
       }
       /* LO QUE INVOCA YA ESTÁ EN EL CAMPO. Reportado en Reddit: el bot
@@ -1512,7 +1744,13 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
           if(exp("remocionUtil") && esMuro(objetivo) && !v.monstruosRival.some(c2=>!c2.bocaAbajo && !c2.defensa)){
             p = 0.3; vetado = true; por += " (es un muro: se rodea, no se destruye)"; break; }
           // no gastes remoción en algo que matas en combate
-          const puedoEnCombate = !flotaBatalla && n>=2 && v.monstruos.some(x=>!x.bocaAbajo && ganaCombate(x,objetivo));
+          /* Una llave no se mata atacando: con el TER boca arriba no ataca
+             nadie, y el Relinquished con equipo pierde el equipo en su lugar
+             (y me devuelve el daño). */
+          const llaveIntocable = exp("llaves") && !objetivo.bocaAbajo
+            && (canon(objetivo.nombre ?? "") === "Thousand-Eyes Restrict"
+                || (canon(objetivo.nombre ?? "") === "Relinquished" && atk(objetivo) > 0));
+          const puedoEnCombate = !flotaBatalla && !llaveIntocable && n>=2 && v.monstruos.some(x=>!x.bocaAbajo && ganaCombate(x,objetivo));
           p = puedoEnCombate ? 0.6 : 3.2 + poder(objetivo)/1500;
           if(puedoEnCombate) por += " (lo mato en combate, no la gasto)";
           if(flotaBatalla){ p = 2.4 + poder(objetivo)/1500; por += ` (${objetivo.nombre} solo flota si muere en combate)`; }
@@ -1550,6 +1788,24 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
           if(n>=2 && nom==="Nobleman of Crossout"){
             const hayTapado = v.monstruosRival.some(c2=>c2.bocaAbajo);
             p = hayTapado ? 4.2 : 0.1;
+            /* ══ LO QUE YA SÉ QUE MUERE EN COMBATE NO SE DESTIERRA (19-11) ══
+               E: «el clásico plan contra Kycoo: invocas Tsukuyomi, efecto al
+               Kycoo, y en defensa Tsukuyomi lo destruye en la batalla; la IA
+               gastaría un recurso más como Nobleman of Crossout a pesar de
+               saber que Tsukuyomi lo limpia pegándole». Si TODAS sus tapadas
+               son cartas que ya vi, no son volteos (atacarlas no dispara
+               nada) y algún atacante mío les supera la defensa, la carta se
+               guarda. */
+            if(hayTapado && exp("tsukMata") && !!m.to_bp){
+              const atacantes = v.monstruos.filter(x => !x.bocaAbajo && !x.defensa && atk(x) > 0
+                                                     && x.atacoTurno !== v.turno && !esFicha(x));
+              const tapadas = v.monstruosRival.filter(c2 => c2.bocaAbajo);
+              const muere = t => { const d = t.conocida?.datos; if(!d) return false;
+                                   if((Number(d.type) || 0) & 0x200000) return false;
+                                   return atacantes.some(a => atk(a) > (Number(d.defense) || 0)); };
+              if(tapadas.every(muere)){ p = 0.4; vetado = true;
+                por += " (la tapada ya la conozco y muere en combate: no gasto Nobleman)"; }
+            }
           }
           // si abre el camino a la victoria, no hay nada mejor que hacer
           if(exp("remate") && remate){ p = 9.5; por += " (le abre el camino: es letal)"; }
@@ -1704,7 +1960,18 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
           const objetivo = objetivoDeRobo(v);
           if(!objetivo){
             p = 0.05; vetado = true; por += " (solo fichas o tapadas: robar eso no gana nada)"; break; }
-          const decide = poder(objetivo) >= 1700 || valorCarta(objetivo) >= 1.6;
+          /* ══ SNATCH STEAL ES PARA LO QUE CAMBIA LA PARTIDA (14-11) ══
+             E: «Snatch Steal y Tribe son cartas super importantes que
+             cambian la partida, han de guardarse para esos momentos». El
+             examen: la IA la jugaba donde los pros no en 175 posiciones, 53
+             de ellas contra un Gravekeeper's Spy EN DEFENSA —`poder` es la
+             defensa, 2000, y pasaba el listón de 1700— y 18 contra Zombyra.
+             Ahora el listón es lo que el monstruo PEGA (1900) o lo que vale
+             (BLS, Chaos Sorcerer, Jinzo, Thousand-Eyes, un monarca…); lo
+             demás, solo para rematar (`roboLetal`) o con prisa de verdad. */
+          const decide = exp("snatchMomento")
+            ? (atkEnCombate(objetivo, v.lp.rival) >= 1900 || valorCarta(objetivo) >= 1.6)
+            : (poder(objetivo) >= 1700 || valorCarta(objetivo) >= 1.6);
           p = decide ? 6.0 + poder(objetivo)/1200 : 1.0 + prisa*1.4;
           /* ══ «NO VALE LA SNATCH: LA GUARDO»… Y LA JUGABA ══
              E, 02-10 (Zombie, p1, T10): el log decía «Pyramid Turtle no
@@ -1810,6 +2077,28 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
              Ponerla cuanto antes es el plan; cobrarla pronto es tirarla. */
           const enCampo = l.location === 8;
           if(!enCampo){ p = 5.2; por += " (a contar cuanto antes)"; break; }
+          /* ══ COBRAR O ESPERAR SE CALCULA (01-11) ══
+             Esto era `remata = lp ≤ 3000`: cobraba 1000 de daño con el
+             rival a 2800 y se guardaba 4000 con el rival a 3500, porque no
+             sabía cuánto llevaba. La cuenta es pública (`cuenta`, la chapa
+             de la carta). Con ella, esperar un turno vale (daño+1000) por la
+             probabilidad de que la Cannon siga ahí; cobrar vale el daño de
+             ahora. Ni "espera siempre al máximo" ni "cobra en cuanto
+             puedas": depende de lo que le quede al rival para quitármela. */
+          if(exp("quemaAcumulada")){
+            const vc = v.backrow.find(b => b.uid != null && b.uid === c.uid);
+            const porTurno = Number(/inflict (\d+) damage .{0,40}for each of your Standby/i.exec(textoDe(c))?.[1] ?? 1000);
+            const daño = porTurno * (vc?.cuenta ?? 0);
+            if(daño <= 0){ p = 0.05; por += " (aún no ha contado ningún turno)"; break; }
+            if(daño >= v.lp.rival){ p = 9; por += ` (${daño} y le quedan ${v.lp.rival}: letal)`; break; }
+            const riesgo = riesgoPerderMagia(v);
+            const esperar = (1 - riesgo) * (daño + porTurno);
+            /* `firme`: la simulación mira hasta mi próximo turno y ahí cobrar
+               ya siempre parece mejor (el daño de esperar cae fuera). */
+            if(esperar > daño){ p = 0.15; firme(IA.SELECT_ACTIVATE, i); por += ` (${daño} ahora; esperar vale ${Math.round(esperar)} con un ${Math.round(riesgo*100)}% de perderla)`; }
+            else { p = 2.6 + 3.0 * daño / Math.max(1, v.lp.rival); por += ` (cobro ${daño}: con un ${Math.round(riesgo*100)}% de perderla, esperar no compensa)`; }
+            break;
+          }
           const remata = v.lp.rival <= 3000;
           p = remata ? 6.5 : 0.15;
           por += remata ? " (con esto llega)" : " (que siga sumando)";
@@ -1937,13 +2226,40 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
                —el Vampire Lord— y E le dio su Giant Rat tapada. Cada uno
                elige lo que entrega: yo el peor mío, él el peor suyo. Solo
                compensa si su peor vale claramente más que mi peor. */
-            const precio = x => valorCarta(x) + ((x.bocaAbajo && !x.nombre) ? 0.6 : poder(x) / 2000);
+            /* ══ UN ESPÍRITU QUE DOY VUELVE A MI MANO (19-11) ══
+               E: «Tsukuyomi con Creature Swap: al final del turno vuelve a
+               la mano del poseedor original, así que realmente es robarle un
+               monstruo sin darle nada a cambio… lo mismo con Asura Priest».
+               Un espíritu boca arriba que entró o se volteó este turno se
+               vuelve a MI mano en la End Phase aunque lo controle él: darlo
+               no cuesta casi nada. Solo si lo que me llevo es un monstruo de
+               verdad (no una ficha ni un Serpent). */
+            const vuelveAMi = x => exp("swapEspiritu") && !x.bocaAbajo && infoDe(x).espiritu
+              && (x.entroTurno === v.turno || x.volteoTurno === v.turno);
+            /* ══ DAR MI FLOATER (19-11) ══ E: «invocar tu floater y hacer
+               Creature Swap puede ser extremadamente potente: robas su
+               monstruo y si destruyes tu floater intercambiado, sigues
+               teniendo su efecto». Con batalla por delante y algo mío que
+               le gane, darlo cuesta casi nada. */
+            const floaterQueVuelve = x => exp("swapFloater") && !x.bocaAbajo && rolDe(x) === "floater"
+              && !!FILTRO_FLOATER[canon(x.nombre ?? "")] && !!m.to_bp && v.fase === 0x4
+              && v.monstruos.some(a => a.uid !== x.uid && !a.bocaAbajo && !a.defensa && atk(a) > (x.defensa ? def(x) : atk(x)));
+            const precio = x => vuelveAMi(x) ? 0.1 : floaterQueVuelve(x) ? 0.2
+              : valorCarta(x) + ((x.bocaAbajo && !x.nombre) ? 0.6 : poder(x) / 2000);
             if(!v.monstruos.length || !v.monstruosRival.length){
               p = 0.05; vetado = true; por += " (hace falta un monstruo a cada lado)"; break; }
             const doy = Math.min(...v.monstruos.map(precio));
             const recibo = Math.min(...v.monstruosRival.map(precio));
             const gana = recibo - doy;
-            if(gana >= 0.6){ p = 3.0 + gana; por += ` (le doy lo peor mío y su peor vale ${gana.toFixed(1)} más)`; }
+            const doyEspiritu = v.monstruos.some(x => (vuelveAMi(x) || floaterQueVuelve(x)) && precio(x) === doy);
+            const loQueMeLlevo = v.monstruosRival.find(x => precio(x) === recibo);
+            if(doyEspiritu && (recibo < 1.0 || !loQueMeLlevo || esFicha(loQueMeLlevo) || rolDe(loQueMeLlevo) === "recurso")){ p = 0.05; vetado = true;
+              por += " (le daría el espíritu, pero lo que me llevo no vale una carta)"; break; }
+            if(gana >= 0.6){ p = 3.0 + gana; por += doyEspiritu
+                ? (v.monstruos.some(x => floaterQueVuelve(x) && precio(x) === doy)
+                    ? ` (le doy mi floater, lo mato en la batalla y el efecto es mío: me llevo su monstruo gratis)`
+                    : ` (le doy un espíritu que vuelve a mi mano en la End Phase: me llevo su monstruo gratis)`)
+                : ` (le doy lo peor mío y su peor vale ${gana.toFixed(1)} más)`; }
             else { p = 0.05; vetado = true; firme(IA.SELECT_ACTIVATE, i);
                    por += " (él me daría lo peor que tiene: no compensa lo que entrego)"; }
             break;
@@ -1971,8 +2287,10 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
                su efecto) o a lo que robé con Snatch Steal (se queda). */
             if(exp("tsukPlan") && exp("tsukBom") && nom==="Book of Moon"){
               const obj = planTumbar(v, { fuente:"Book of Moon", conBatalla: !!m.to_bp && v.fase === 0x4 })
-                            .find(o => v.monstruos.some(x => x.uid === o.uid) || /TER/.test(o.por));
-              if(obj && obj.valor >= 2.4 && obj.valor > p){ p = obj.valor; por = `activar Book of Moon (${obj.por})`; }
+                            .find(o => v.monstruos.some(x => x.uid === o.uid) || /TER|Relinquished/.test(o.por));
+              if(obj && obj.valor >= 2.4 && obj.valor > p){ p = obj.valor; por = `activar Book of Moon (${obj.por})`;
+                /* Lo que desbloquea una llave no se guarda «para el turno rival». */
+                if(exp("llaves")) despeja = true; }
             }
           } else if(nom==="Tsukuyomi"){
             /* Tsukuyomi vuelve a tu mano cada End Phase, así que la
@@ -1998,6 +2316,13 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
           const sale = inf.invoca ? { nombre: inf.invoca, datos:null } : null;
           p = sale ? 2.2 + valorCarta(sale) : 1.5;
           por += sale ? ` (saca ${inf.invoca})` : "";
+          /* Un ritual que saca un absorbedor (Relinquished) sin nada suyo
+             boca arriba que llevarse deja un 0/0 en la mesa: mejor esperar
+             a que invoque. Con la partida apurada, se saca igual. */
+          if(exp("llaves") && inf.ritual && ABSORBEN.has(inf.invoca ?? "")
+             && !v.monstruosRival.some(x => !x.bocaAbajo && !esFicha(x)) && prisa < 0.5){
+            p = 0.5; por += " (no hay nada suyo boca arriba que absorber: espero)";
+          }
           break;
         }
         /* Una carta que HABILITA a otras (Toon World). No hace nada
@@ -2237,14 +2562,29 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
       /* Un veto es un veto para todos: por debajo de 0.15, que es donde
          pensar.js deja de simular. Había vetos a 0.2 y 0.3 (Chaos Sorcerer
          sin objetivo, un muro…) que la simulación seguía considerando. */
+      /* ══ EL BUSCADOR SE GUARDA SI NO PUEDO INVOCAR (14-11) ══
+         Examen contra los pros (`examen-replays.mjs`, 323 duelos de top
+         cut): con la invocación normal ya gastada, la IA activaba
+         Reinforcement of the Army en el 79 % de las posiciones y los
+         jugadores en el 18 %. Sacar el guerrero ahora no lo baja este
+         turno: le enseña al rival qué viene, me lo expone a Delinquent
+         Duo y me quita elegir CUÁL (Exiled Force contra un monstruo, D.D.
+         Assailant contra un Chaos) cuando de verdad lo vaya a invocar. */
+      if(exp("buscadorGuarda") && nom === "Reinforcement of the Army" && !vetado && p > 0.6
+         && !((m.summons?.length ?? 0) + (m.monster_sets?.length ?? 0)) && v.mano.length <= 6){
+        p = Math.min(p, 0.6); firme(IA.SELECT_ACTIVATE, i);
+        por += " (sin invocación este turno: el guerrero se busca cuando se vaya a bajar)";
+      }
       if(vetado) p = Math.min(p, 0.1);
       añadir(p, IA.SELECT_ACTIVATE, i, por);
     });
 
     /* 4. COLOCAR MAGIA/TRAMPA */
+    /* Un farol por turno como mucho: el de la mágica que menos duele perder. */
+    const faroles = [];
     (m.spell_sets||[]).forEach((l,i)=>{
       const c = cartaDeLista(l), inf = infoDe(c);
-      let p = 1.4;
+      let p = 1.4, por0 = "";
       if(inf.reactiva || inf.rapida) p += 1.4;          // trampas y rápidas quieren estar puestas
       if(n>=2 && v.backrow.length>=3) p -= 1.2;         // no cargar todo el backrow
       /* ══ NO SE LE ENTREGA EL BACKROW A UN HEAVY STORM ══
@@ -2252,9 +2592,36 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
          Torrential y Sakuretsu; su Heavy Storm se llevó las cuatro. Mientras
          el rival no haya gastado el suyo y tenga mano, la tercera tapada ya
          cuesta y la cuarta no se pone: lo que no está puesto no se barre. */
-      if(exp("sobreBackrow") && !rivalUso(v,"Heavy Storm") && v.manoRival.cuantas > 0){
+      /* ══ COMPROMETERSE POCO A POCO (14-11) ══
+         E: «en muchos mazos quieres jugar el backrow y tus recursos
+         progresivamente, sin comprometer hasta que sabes que merece la pena
+         porque el riesgo es menor (el rival no tiene cartas, por ejemplo)».
+         El examen lo dice igual: con una tapada ya puesta los pros colocan
+         la siguiente trampa el 57 % de las veces si el rival tiene 4 cartas
+         o más y el 80 % si tiene una o ninguna. La IA no miraba su mano.
+         Con su mano llena y su barrido sin gastar, la segunda trampa se
+         guarda salvo que haga falta ya (algo suyo de frente me gana); con
+         su mano vacía no hay barrido que temer y se baja todo. */
+      const tapadas = v.backrow.filter(x => x.bocaAbajo).length;
+      const suMano = v.manoRival.cuantas;
+      const barridoVivo = !rivalUso(v,"Heavy Storm") && !rivalUso(v,"Harpie's Feather Duster");
+      const esTrampa = !!((Number(c.datos?.type) || 0) & 0x4);
+      if(exp("sobreBackrow") && barridoVivo && suMano > (exp("gradual") ? 1 : 0)){
         if(v.backrow.length >= 2) p -= 1.0;
         if(v.backrow.length >= 3) p -= 2.5;
+      }
+      /* Pero no todas: los pros guardan las que más duele perder a un
+         barrido —Mirror Force (31 % colocadas), Torrential (30 %), Call of
+         the Haunted, Raigeki Break, Return from the Different Dimension— y
+         colocan sin pensarlo las baratas o las que tienen que llevar un
+         turno puestas (Jar of Greed 91 %, Trap Dustshoot 98 %, Drop Off,
+         Time Seal). Probada para todas, la regla bajaba el examen. */
+      const GUARDA_FUERTES = new Set(["Mirror Force", "Torrential Tribute", "Call of the Haunted", "Raigeki Break",
+                                      "Return from the Different Dimension"]);
+      if(exp("gradual") && esTrampa && GUARDA_FUERTES.has(canon(c.nombre ?? "")) && barridoVivo && tapadas >= 1 && suMano >= 4){
+        const miMayor = Math.max(0, ...v.monstruos.filter(x => !x.bocaAbajo).map(x => poder(x)));
+        const haceFaltaYa = v.monstruosRival.some(r => !r.bocaAbajo && !r.defensa && atk(r) > miMayor);
+        if(!haceFaltaYa){ p = Math.min(p, 0.7); firme(IA.SELECT_SPELL_SET, i); por0 = " (la guardo: su mano está llena y el Heavy Storm sin gastar)"; }
       }
       if(exp("cabras") && canon(c.nombre)==="Scapegoat") p += 1.2; // colocada para encadenarla luego
 
@@ -2329,14 +2696,30 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
             return (t2 & 0x4) || i2.reactiva || i2.rapida || (t2 & 0x10000);   // trampas y rápidas
           }).length + (((m.monster_sets?.length ?? 0) + (m.summons?.length ?? 0)) ? 1 : 0);
         const manoLlena = (v.mano?.length ?? 0) - bajanSolas > 6;
+        /* ══ …SALVO DE FAROL (14-11) ══
+           E: «a veces colocan mágicas o trampas de farol… todo es para
+           protegerse del removal del rival». Con el backrow vacío y nada
+           mejor que poner, una mágica que hoy no se juega va boca abajo:
+           representa una trampa (el rival tiene que jugar alrededor) y la
+           saca de Delinquent Duo y Card Destruction. Solo una, y nunca si
+           ya hay algo puesto (eso sí sería regalarle un Heavy Storm). Los
+           pros lo hacen en uno de cada cuatro turnos así. */
+        const nadaPuesto = !v.backrow.some(x => x.bocaAbajo);
+        const otraQuePoner = bajanSolas - (((m.monster_sets?.length ?? 0) + (m.summons?.length ?? 0)) ? 1 : 0) > 0;
+        if(!manoLlena && exp("farol") && nadaPuesto && !otraQuePoner && v.manoRival.cuantas >= 1 && !puedoActivarla)
+          faroles.push({ i, nombre:c.nombre, precio:valorCarta(c) });
         if(!manoLlena){
           añadir(0.1, IA.SELECT_SPELL_SET, i,
                  `colocar ${c.nombre} (lenta: desde la mano hace lo mismo y no se expone)`);
           return;
         }
       }
-      añadir(p, IA.SELECT_SPELL_SET, i, `colocar ${c.nombre}`);
+      añadir(p, IA.SELECT_SPELL_SET, i, `colocar ${c.nombre}${por0}`);
     });
+    if(faroles.length){
+      const f = faroles.sort((a, b) => a.precio - b.precio)[0];
+      añadir(0.9, IA.SELECT_SPELL_SET, f.i, `colocar ${f.nombre} (de farol: sin nada puesto, representa una trampa y la saca de su Delinquent Duo)`);
+    }
 
     /* 5. CAMBIAR POSICIÓN
        TRAMPA: esto valía 0.9 fijo y el umbral para actuar es 0.8, así que
@@ -2367,6 +2750,15 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
       const esFlip = !!((c.datos?.type ?? 0) & 0x200000)
                      || inf.rol==="flip" || inf.colocarPreferente;
       let p, por = `girar ${c.nombre}`;
+      /* Lo mismo al voltearla: Tsukuyomi volteada sin nada que tumbar se
+         vuelve a tumbar ella (`tsukSola`). */
+      if(exp("tsukSola") && tapada && canon(c.nombre ?? "") === "Tsukuyomi"){
+        const obj = planTumbar(v, { conBatalla:false }).filter(o => o.uid !== real?.uid)[0];
+        if(!obj || obj.valor < 0.8){
+          añadir(0.1, IA.SELECT_POS_CHANGE, i, `${por} (volteada se tumbaría a sí misma: no aporta nada)`);
+          firme(IA.SELECT_POS_CHANGE, i); return;
+        }
+      }
 
       /* Voltear por voltear es la trampa de este bot: el escáner contó
          Tsukuyomi volteado casi seis veces por partida. Un volteo vale lo
@@ -2409,6 +2801,16 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
       const chaosReusa = exp("tsukPlan") && tapada && CHAOS_REUSO.has(nomC)
             && v.monstruosRival.some(x => !x.bocaAbajo && !esFicha(x) && (valorCarta(x) >= 0.8 || atk(x) >= 1400));
       if(chaosReusa){ p = 3.2; por += " (boca arriba otra vez: su destierro vuelve)"; seguro(IA.SELECT_POS_CHANGE, i); }
+      /* Mi TER o mi Relinquished tumbados (por mí con Book of Moon, o por
+         él): boca arriba vuelven a absorber. Con batalla por delante y
+         otros que pegan, el TER espera a la Main 2 (cierra mis ataques). */
+      else if(exp("terPropio") && tapada && ABSORBEN.has(nomC)
+              && v.monstruosRival.some(x => !x.bocaAbajo && !esFicha(x))){
+        const meCierra = nomC === "Thousand-Eyes Restrict" && !!m.to_bp
+          && v.monstruos.some(a => a.uid !== real?.uid && !a.bocaAbajo && !a.defensa && atk(a) > 0 && !esFicha(a));
+        if(meCierra){ p = 0.6; por += " (primero pegan los demás: lo volteo en la Main 2)"; }
+        else { p = 2.6; por += " (boca arriba vuelve a absorber)"; }
+      }
       else if(tapada){                          // voltear = invocación por volteo
         if(esFlip && jarCava)         { p = 0.05; por += " (los dos robamos 5 y yo tengo menos mazo)"; }
         else if(esFlip && flipSirve)  { p = 2.4; por += " (invocación por volteo: dispara su efecto)"; }
@@ -2473,11 +2875,25 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
            esa distinción ya está tomada en `valeAtacar`. `hayGolpe` de
            `evaluarPosicion` es la MISMA cuenta que usan el ataque y la
            postura, tapadas incluidas, así que las tres deciden igual. */
-        const golpeAlLevantarse = !!evaluarPosicion(c, v, {
+        let golpeAlLevantarse = !!evaluarPosicion(c, v, {
           puedeAtacarYa: !!m.to_bp,
           inmuneCombate: !!inf.inmuneCombate,
           perfora: !!inf.perfora,
         }).golpe;
+        /* ══ LEVANTARSE ES QUEDARSE DE FRENTE EN SU TURNO (01-11) ══
+           E: dos Gravekeeper's Spy agachados delante de un Sangan y un
+           monstruo de 1900; la IA las levantaba para matar el Sangan. El
+           combate se ganaba, sí, pero el Sangan busca y después las Spy se
+           quedan de frente con 1200 contra el 1900, cuando agachadas (2000)
+           aguantaban. Se pregunta a `notaCombate` —la misma cuenta que
+           decide atacar— con la defensa como alternativa: si lo mejor que
+           consigue levantándose no compensa, no hay golpe que valga. */
+        if(golpeAlLevantarse && exp("exposicion") && v.monstruosRival.length){
+          const deFrente = { ...c, defensa:false, bocaAbajo:false };
+          const mejor = v.monstruosRival.reduce((mx, r) =>
+            Math.max(mx, notaCombate(deFrente, r, v, { alternativaDefensa:true })), -9);
+          if(mejor < 0.5){ golpeAlLevantarse = false; por += ` (levantarse no compensa: ${mejor.toFixed(1)})`; }
+        }
         /* ══ «DEFIENDE MEJOR» NO VETA UN GOLPE ══
            E, 20-09 (Goat Control, p3, T15): mató el TER con Ring of
            Destruction, el campo rival quedó vacío y sus dos Gravekeeper's
@@ -2616,9 +3032,111 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
           }
         }
       }
+      /* ══ UN VOLTEO QUE QUEMA (01-11) ══
+         Stealth Bird («When this card is Flip Summoned: Inflict 1000») no
+         es un monstruo de volteo para la base de datos, así que caía en la
+         rama de "descubierta se la comen" y no se volteaba nunca: el daño
+         recurrente que es todo su valor no entraba en la cuenta. Se lee del
+         texto, como el resto de quemaduras, y se mide contra sus LP. */
+      if(exp("quemaVolteo") && tapada){
+        const q = quemaAlVoltear(c, v);
+        if(q > 0){
+          const letal = q >= v.lp.rival;
+          const base = letal ? 60 : 1.1 + 3.0 * Math.min(1, q / Math.max(1, v.lp.rival));
+          if(base > p){ p = base; por += ` (voltearlo quema ${q}${letal ? ": es letal" : ""})`; }
+          if(letal) seguro(IA.SELECT_POS_CHANGE, i);
+        }
+      }
       añadir(p, IA.SELECT_POS_CHANGE, i, por, uid);
     });
 
+    /* ══ EL DAÑO DE EFECTO SE SUMA (01-11) ══
+       Cada carta de quemar se puntuaba sola contra los LP del rival: 2000
+       de Cannon y 800 de Ookazi con el rival a 2700 eran dos jugadas
+       "que no matan". Juntas sí. Y con Ojama Trio y Just Desserts el
+       orden ES la jugada: las tres fichas van al campo del rival antes de
+       contar sus monstruos. Se suma todo el daño de efecto que puedo
+       hacer AHORA —con la mesa de ahora, sin suponer nada oculto— y si
+       llega, cada pieza pasa delante de todo lo demás. */
+    if(exp("letalQuema")){
+      const q = planDeQuema(m, v);
+      if(q.letal){
+        traza(`LETAL DE QUEMA: ${q.total} de daño de efecto y le quedan ${v.lp.rival}`);
+        for(const f of q.piezas){
+          const puntos = (f.multiplica ? 70 : 60) + f.daño / 1000;
+          const e = plan.find(x => x.action === f.action && x.index === f.index);
+          if(e){ e.puntos = Math.max(e.puntos, puntos); e.por += ` (letal de quema: ${f.multiplica ? "primero, multiplica" : f.daño})`; }
+          else añadir(puntos, f.action, f.index, `${f.nombre} (letal de quema)`);
+          seguro(f.action, f.index);
+        }
+      }
+    }
+    /* ══ PRIMERO SE ROBA, LUEGO SE DECIDE (14-11) ══
+       Examen contra los pros: cuando el jugador activaba Graceful Charity,
+       Upstart Goblin, Jar of Greed o Delinquent Duo, o volteaba un Dekoichi, la IA en esa misma posición invocaba o
+       colocaba un monstruo primero en la mitad de los casos (Graceful: 73
+       de 238; Jar of Greed: 58 de 156). Los pros resuelven antes lo que da
+       información —cartas nuevas, la mano del rival, el guerrero que
+       buscan— y DESPUÉS gastan la invocación normal: con la carta robada
+       quizá había algo mejor que bajar. Solo reordena: la carta que roba
+       tiene que valer ya por sí misma (p > 0.8), y una jugada `seguro`
+       (letal, campo antes de la batalla…) va delante. */
+    /* Fuera para Empty Jar (plan `deckout`): su orden es el de su combo, y
+       medido le costaba 5 puntos en el espejo (45 % en 400 partidas; 50 %
+       con estas dos reglas apagadas). */
+    if(exp("robarPrimero") && plan.length > 1 && PLAN.objetivo !== "deckout"){
+      /* Lo que da información: robar, buscar, verle la mano. */
+      const ROBA_YA = new Set(["Pot of Greed", "Graceful Charity", "Upstart Goblin", "Delinquent Duo", "Jar of Greed",
+                               "Reinforcement of the Army"]);
+      const VOLTEO_ROBA = new Set(["Dekoichi the Battlechanted Locomotive", "Des Lacooda"]);
+      /* Lo que limpia la mesa: en esas mismas posiciones los pros lo jugaban
+         antes de invocar en el 35-65 % de los casos (Heavy Storm 46 %,
+         Nobleman 35 %, MST 43 %, el destierro de Chaos Sorcerer 52 %).
+         Limpiar primero decide QUÉ conviene invocar y no le deja al
+         monstruo nuevo debajo de una Torrential o una Bottomless. */
+      const LIMPIA_YA = new Set(["Heavy Storm", "Mystical Space Typhoon", "Nobleman of Crossout", "Giant Trunade",
+                                 "Raigeki Break", "Dust Tornado", "Smashing Ground", "Mind Control"]);
+      const EFECTO_LIMPIA = new Set(["Chaos Sorcerer", "Black Luster Soldier - Envoy of the Beginning", "Breaker the Magical Warrior"]);
+      const lista = a => a === IA.SELECT_ACTIVATE ? m.activates : a === IA.SELECT_POS_CHANGE ? m.pos_changes : null;
+      const clase = x => {
+        const l = lista(x.action)?.[x.index]; if(!l) return null;
+        const n = canon(names[l.code]?.name ?? "");
+        if(x.action === IA.SELECT_ACTIVATE){
+          if(l.location === 4) return EFECTO_LIMPIA.has(n) ? "limpia" : null;
+          return ROBA_YA.has(n) ? "info" : LIMPIA_YA.has(n) ? "limpia" : null;
+        }
+        return VOLTEO_ROBA.has(n) && !!(l.position & 0x0a) ? "info" : null;
+      };
+      const esInfo = x => clase(x) === "info";
+      /* Lo que compromete: el monstruo del turno, una tapada más. */
+      const compromete = x => [IA.SELECT_SUMMON, IA.SELECT_MONSTER_SET, IA.SELECT_SPECIAL_SUMMON, IA.SELECT_SPELL_SET].includes(x.action)
+                           || (x.action === IA.SELECT_POS_CHANGE && !clase(x));
+      const orden = [...plan].sort((a,b)=>b.puntos-a.puntos), top = orden[0];
+      /* Reinforcement of the Army va primero SOLO si lo que iba a bajar es
+         un guerrero: entonces buscar antes puede cambiar CUÁL (Exiled Force
+         en vez de Blade Knight). Si lo que bajo no es guerrero —Breaker es
+         Spellcaster, Gravekeeper's Spy, Magician of Faith—, el que busque
+         no se invoca este turno: los pros bajan su monstruo y se guardan
+         el Reinforcement (examen: 15 posiciones que se rompieron al
+         ponerlo siempre primero). */
+      const bajaGuerrero = x => {
+        if(![IA.SELECT_SUMMON, IA.SELECT_MONSTER_SET].includes(x.action)) return false;
+        const l = (x.action === IA.SELECT_SUMMON ? m.summons : m.monster_sets)?.[x.index];
+        return !!l && (Number(db.get(l.code)?.race ?? 0) & 0x1) !== 0;
+      };
+      const vale = x => x.puntos > 0.8 && !firmes.has(`${x.action}:${x.index}`);
+      const esRota = x => { const l = lista(x.action)?.[x.index]; return !!l && canon(names[l.code]?.name ?? "") === "Reinforcement of the Army"; };
+      if(top && top.puntos > 0.8 && !esInfo(top) && !seguros.has(`${top.action}:${top.index}`)){
+        /* lo que roba va delante de todo lo demás; lo que limpia, delante
+           de lo que compromete */
+        let sube = orden.find(x => vale(x) && esInfo(x) && !(esRota(x) && !bajaGuerrero(top)));
+        if(!sube && exp("limpiarPrimero") && compromete(top)) sube = orden.find(x => vale(x) && clase(x) === "limpia");
+        if(sube){
+          sube.puntos = top.puntos + 0.01; seguro(sube.action, sube.index);
+          sube.por += esInfo(sube) ? " (robar antes de comprometerse)" : " (limpiar antes de invocar)";
+        }
+      }
+    }
     plan.sort((a,b)=>b.puntos-a.puntos);
     /* Lo que opina la heurística de cada jugada: `ai/pensar.js` lo usa
        para decidir qué simular primero. */
@@ -2657,6 +3175,407 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
      motor pregunta otra vez, el bot contesta lo mismo… Ahora, si pasar no
      está permitido, ataca: el obligado primero, y entre las opciones la
      que menos duele (`check-obligado` lo prueba). */
+  /* ══════════════════════════════════════════════════════════════════
+     EL COMBATE ENTERO, NO SOLO LOS NÚMEROS (01-11)
+
+     E: «la IA se centra en el ATK actual y no en el resultado completo».
+     Tres cosas que la cuenta de ATK no ve y que salen del texto o de la
+     mesa, no de una lista de cartas:
+
+       1. PROTECCIÓN. Relinquished con un monstruo absorbido boca abajo
+          vale 0/0, pero "matarlo" rompe el equipo y él se queda —con el
+          daño reflejado al atacante— y queda libre para llevarse otro
+          monstruo mío al turno siguiente (`leerProteccion`).
+       2. LO QUE EL RIVAL GANA CUANDO MUERE SU MONSTRUO: reponer, buscar,
+          robar, destruir uno mío (`leerAlMorir`). Las cartas escritas a
+          mano como `floater` ya tenían sus reglas y no se tocan; esto es
+          para las otras.
+       3. CÓMO QUEDO EN SU TURNO. Un monstruo que ataca ya no puede
+          agacharse en la Main Phase 2; uno que se levanta para atacar,
+          tampoco. Dos Gravekeeper's Spy en defensa delante de Sangan y un
+          1900: levantarlas mata el Sangan (que busca) y las deja de frente
+          contra el 1900, cuando agachadas aguantaban (`costeDeFrente`).
+     ══════════════════════════════════════════════════════════════════ */
+  const textoDe = c => names[c?.code]?.desc ?? "";
+  /* ¿Cuánto es de probable que el rival me quite una mágica/trampa puesta
+     antes de mi siguiente Main Phase? Con lo que se ve: las cartas que
+     tiene (mano + el robo + sus tapadas, que pueden ser MST o Dust
+     Tornado) contra los ~4 quitamagias del formato (Heavy Storm, MST,
+     Breaker, Dust Tornado), descontando los que ya ha gastado. Un Breaker
+     suyo boca arriba con su contador lo hace casi seguro. */
+  const QUITAMAGIAS = ["Heavy Storm","Mystical Space Typhoon","Dust Tornado","Breaker the Magical Warrior",
+                       "Harpie's Feather Duster","Giant Trunade"];
+  function riesgoPerderMagia(v){
+    const gastadas = [...v.cementerioRival, ...v.desterradasRival]
+      .filter(x => QUITAMAGIAS.includes(canon(x?.nombre ?? ""))).length;
+    const outs = Math.max(0.5, 4 - gastadas);
+    const ve = (v.manoRival?.cuantas ?? 0) + 1 + 0.6 * (v.tapadasRival ?? 0);
+    let p = 1 - Math.pow(1 - outs / 40, ve);
+    if(v.monstruosRival.some(x => !x.bocaAbajo && canon(x.nombre ?? "") === "Breaker the Magical Warrior")) p = Math.max(p, 0.75);
+    return Math.max(0.05, Math.min(0.85, p));
+  }
+  /* Todo el daño de efecto que puedo hacer en ESTA ventana, pieza a pieza:
+     cobrar un acumulador (Wave-Motion Cannon, por su cuenta pública),
+     mágicas y trampas que queman (lo que dice su texto con la mesa de
+     ahora) y monstruos tapados que queman al voltearse. Una carta que
+     pone fichas en SU campo (Ojama Trio) multiplica lo que va por
+     monstruo suyo. Sin tributos ni nada que dependa de lo oculto. */
+  function planDeQuema(m, v){
+    const piezas = [];
+    const zonasLibres = 5 - v.monstruosRival.length;
+    let regalo = null;
+    (m.activates || []).forEach((l, i) => {
+      const c = cartaDeLista(l);
+      const t = textoDe(c);
+      const tipo = Number(c.datos?.type ?? 0);
+      if(!(tipo & 0x6)) return;                                  // solo mágicas y trampas
+      const acum = /inflict (\d+) damage .{0,40}for each of your Standby/i.exec(t);
+      if(acum){
+        const vc = v.backrow.find(b => b.uid != null && b.uid === c.uid);
+        const d = Number(acum[1]) * (vc?.cuenta ?? 0);
+        if(d > 0) piezas.push({ action:IA.SELECT_ACTIVATE, index:i, daño:d, nombre:c.nombre, fija:true });
+        return;
+      }
+      const rg = leerRegalo(t, c.datos);
+      if(rg?.fichas && zonasLibres >= rg.cuerpos){ regalo = { action:IA.SELECT_ACTIVATE, index:i, nombre:c.nombre, n:rg.cuerpos, daño:0, multiplica:true }; return; }
+      if(/\bTribute\b/i.test(t)) return;
+      const d = quemaMedible(t, v);
+      if(d != null && d > 0) piezas.push({ action:IA.SELECT_ACTIVATE, index:i, daño:d, nombre:c.nombre, texto:t });
+    });
+    (m.pos_changes || []).forEach((l, i) => {
+      if(!(l.position & 0x0a) || l.controller !== yo) return;
+      const c = cartaDeLista(l);
+      const d = quemaAlVoltear(c, v);
+      if(d > 0) piezas.push({ action:IA.SELECT_POS_CHANGE, index:i, daño:d, nombre:c.nombre });
+    });
+    const total = piezas.reduce((s, f) => s + f.daño, 0);
+    if(total >= v.lp.rival && total > 0) return { letal:true, total, piezas };
+    if(regalo){
+      /* Con sus fichas en la mesa: lo que cuenta monstruos suyos sube. */
+      const fichas = Array.from({ length: regalo.n }, () => ({ bocaAbajo:false, defensa:true, datos:{ type:0x4001, attack:0, defense:1000, level:2 } }));
+      const v2 = { ...v, monstruosRival:[...v.monstruosRival, ...fichas] };
+      const piezas2 = piezas.map(f => f.texto ? { ...f, daño: quemaMedible(f.texto, v2) ?? f.daño } : f);
+      const total2 = piezas2.reduce((s, f) => s + f.daño, 0);
+      if(total2 >= v.lp.rival) return { letal:true, total:total2, piezas:[regalo, ...piezas2] };
+    }
+    return { letal:false, total, piezas };
+  }
+  /* Lo que quema un monstruo mío al invocarlo por volteo (Stealth Bird,
+     Des Koala), con la mesa de ahora. 0 si no quema. */
+  const quemaAlVoltear = (c, v) => {
+    const t = textoDe(c);
+    const m = /(When this card is Flip Summoned|FLIP)\s*:[^.]*?inflict/i.exec(t);
+    return m ? (quemaMedible(t.slice(m.index), v) ?? 0) : 0;
+  };
+  /* ¿Este monstruo mío podría ponerse en defensa a mano si NO ataca?
+     No si entró, se volteó o ya se giró este turno. */
+  const puedeAgacharseLuego = (x, v) => !!x && !x.defensa && x.uid != null
+    && (x.entroTurno == null || x.entroTurno < v.turno) && x.volteoTurno !== v.turno
+    && giroManualTurno.get(x.uid) !== v.turno && x.atacoTurno !== v.turno;
+  /* Lo que impide atacar a TODO el mundo (o al rival, si es mío): Gravity
+     Bind, Level Limit, Messenger of Peace, Swords of Revealing Light.
+     Leído del texto. Devuelve un filtro: ¿este monstruo SUYO puede pegarme? */
+  function puedePegarme(v){
+    let nivelMax = Infinity, atkMax = Infinity, nadie = false;
+    for(const b of [...v.backrow, ...v.backrowRival]){
+      if(!b || b.bocaAbajo) continue;
+      const t = textoDe(b); let m;
+      if((m = /Level (\d+) or higher monsters cannot attack/i.exec(t))) nivelMax = Math.min(nivelMax, +m[1] - 1);
+      if((m = /Level (\d+) or higher monsters to Defense Position/i.exec(t))) nivelMax = Math.min(nivelMax, +m[1] - 1);
+      if((m = /Monsters with (\d+) or more ATK cannot declare an attack/i.exec(t))) atkMax = Math.min(atkMax, +m[1] - 1);
+      if(b.mia && /your opponent's monsters cannot declare an attack/i.test(t)) nadie = true;
+    }
+    return x => !nadie && (x.datos?.level ?? 0) <= nivelMax && atk(x) <= atkMax;
+  }
+  /* Con qué me pega el rival en su turno, con lo que se ve, después de
+     este combate: sin el que muere (`fuera`) y con lo que entre (`sale`). */
+  function golpeTrasCombate(v, { fuera = null, sale = 0 } = {}){
+    const pega = puedePegarme(v);
+    let golpe = sale;
+    for(const x of v.monstruosRival){
+      if(!x || x.uid === fuera || x.bocaAbajo || x.atado || !pega(x)) continue;
+      golpe = Math.max(golpe, atkEnCombate(x, v.lp?.rival ?? Infinity));
+    }
+    return golpe;
+  }
+  /* Lo que el rival gana cuando muere SU monstruo `r` a manos de `c`, en la
+     escala de `valeAtacar` (una carta ≈ 1). Solo lo leído del texto y solo
+     para lo que no es `floater` en la tabla (esos ya tienen sus reglas). */
+  function regaloAlMorir(c, r, v, { muero }){
+    if(r.bocaAbajo || rolDe(r) === "floater" || (exp("swapFloater") && r.mioRobado)) return { coste:0 };
+    const am = leerAlMorir(textoDe(r));
+    if(!am) return { coste:0 };
+    const meQueda = (infoDe(c).espiritu || muero) ? 0 : atk(c);
+    switch(am.efecto){
+      case "reemplazo": {
+        const sale = am.atkMax ?? (am.defMax != null ? 2000 : 1500);
+        return { coste: 0.6 + (sale > meQueda ? 1.0 + (sale - meQueda) / 1000 : 0), sale,
+                 por:`${r.nombre} saca otro monstruo del mazo (hasta ${sale})` };
+      }
+      case "busca": case "roba":
+        return { coste:0.8, por:`${r.nombre} le repone una carta` };
+      case "destruye": {
+        /* Elige él: se lleva lo mejor que me quede en la mesa. */
+        const quedan = v.monstruos.filter(x => !x.bocaAbajo && (x.uid !== c.uid || !muero));
+        const peor = quedan.reduce((mx, x) => Math.max(mx, valorCarta(x) + atk(x) / 2500), 0);
+        return { coste: peor, por:`${r.nombre} destruye otro monstruo mío al morir` };
+      }
+      case "destruyeAtacante": case "destierraAtacante":
+        return { coste: muero ? 0 : valorCarta(c) + 0.5, por:`${r.nombre} se lleva al atacante` };
+      case "quema":
+        return { coste: (am.quema ?? 500) / 1500, por:`${r.nombre} me quema ${am.quema} al morir` };
+      default: return { coste:0 };
+    }
+  }
+  function ajustesCombate(c, r, v, s, { mata, muero, infoC, alternativaDefensa = false }){
+    let sale = 0, fuera = (mata && !muero) || (mata && muero) ? r.uid : null;
+    if(exp("combateCompleto") && !r.bocaAbajo){
+      /* 1 · PROTECCIÓN POR SUSTITUCIÓN (Relinquished) */
+      const pr = leerProteccion(textoDe(r));
+      if(pr.sustituye && r.equipado && mata){
+        const daño = r.defensa ? 0 : Math.max(0, atk(c) - atk(r));
+        if(daño >= v.lp.rival && (!pr.refleja || daño < v.lp.mio)){
+          traza(`${r.nombre} no muere (se rompe el equipo), pero ${daño} de daño le remata`);
+          return 9 + daño / 1000;
+        }
+        if(pr.refleja && daño >= v.lp.mio) return -9;
+        /* Le quito el monstruo que absorbió (que era mío: no le cuesta una
+           carta), el daño se me devuelve si refleja, y si absorbe queda
+           libre para llevarse otro de los míos el turno que viene. */
+        let nota = 0.2 + (pr.refleja ? 0 : daño / 1500);
+        if(pr.absorbe){
+          const mejorMio = v.monstruos.filter(x => !x.bocaAbajo)
+                             .reduce((mx, x) => Math.max(mx, valorCarta(x) + atk(x) / 2000), valorCarta(c));
+          nota -= 0.8 + mejorMio * 0.6;
+        }
+        traza(`${r.nombre}: se rompe el equipo y él se queda${pr.refleja ? `, ${daño} de daño para los dos` : ""}`
+              + `${pr.absorbe ? ", y podrá absorber otro monstruo mío" : ""}`, { valor:+nota.toFixed(2) });
+        return nota;
+      }
+      /* 2 · LO QUE LE DA SU MONSTRUO AL MORIR */
+      if(mata && !infoDe(r).inmuneCombate){
+        const rg = regaloAlMorir(c, r, v, { muero });
+        if(rg.coste > 0){ s -= rg.coste; sale = rg.sale ?? 0; traza(rg.por, { valor:-rg.coste }); }
+      }
+    }
+    /* 3 · CÓMO QUEDA EL ATACANTE EN SU TURNO */
+    if(exp("exposicion") && !c.prestado && !muero && s > -4
+       && (alternativaDefensa || puedeAgacharseLuego(c, v))){
+      if(mata && flotaEnCombate(r) && !(exp("swapFloater") && r.mioRobado)) sale = Math.max(sale, loQueSacaFloater(r));
+      const golpe = golpeTrasCombate(v, { fuera, sale });
+      if(golpe > 0 && atk(c) <= golpe){
+        const daño = golpe - atk(c);
+        const aguantabaAgachado = def(c) >= golpe;
+        let extra;
+        if(aguantabaAgachado && mata && !r.bocaAbajo){
+          /* Iba a ser un golpe gratis y se queda en un cambio con daño: lo
+             que vale de más un "me lo llevo gratis" sobre un cambio. */
+          const gratis = 4 + poder(r) / 1000, cambio = 1.0 + (valorCarta(r) - valorCarta(c));
+          extra = Math.max(0, gratis - cambio) + daño / 1200;
+        } else extra = (aguantabaAgachado ? valorCarta(c) + 0.5 : 0) + daño / 1200;
+        if(extra > 0.05){
+          s -= extra;
+          traza(`${c.nombre} se queda de frente contra ${golpe}${aguantabaAgachado ? " (agachado aguantaba)" : ""}`, { valor:-+extra.toFixed(2) });
+        }
+      }
+    }
+    return s;
+  }
+
+  /* ══ ESTRELLAR MI FLOATER A PROPÓSITO (19-11) ══
+     Un ataque en el que muere mi monstruo y el suyo no contaba siempre
+     como suicidio (−4). Con un floater no lo es si lo que sale de mi mazo
+     resuelve la mesa: Exiled Force se lleva su monstruo en la Main 2; lo
+     que sale le gana ya y le ataca en esta misma Battle Phase (el motor lo
+     deja: check-floaters); un D.D. lo cambia; Sangan trae la respuesta a
+     la mano. El precio es el daño que me como, el doble con poca vida. */
+  function valeCrash(c, r, v){
+    if(!exp("crashFloater") || c.prestado || c.bocaAbajo || r.bocaAbajo || r.defensa) return null;
+    if(rolDe(c) !== "floater") return null;
+    const f = FILTRO_FLOATER[canon(c.nombre ?? "")];
+    if(!f) return null;
+    const golpe = atkEnCombate(r, v.lp?.rival ?? Infinity);
+    const daño = Math.max(0, golpe - atk(c));
+    if(daño >= v.lp.mio) return null;
+    const amenaza = golpe >= 1700 || valorCarta(r) >= 1.3;
+    let mejor = null;
+    for(const x of reclutables(v, c)){
+      const n = canon(x.nombre ?? ""), ix = infoDe(x), sale = Number(x.datos?.attack) || 0;
+      let b = 0, por = "";
+      if(f.aMano){
+        if(amenaza && ["Exiled Force","D.D. Warrior Lady","Tsukuyomi","D.D. Assailant"].includes(n)){
+          b = valorCarta(r) * 0.6; por = `Sangan me trae ${x.nombre}`; }
+      } else if(n === "Exiled Force" && amenaza){ b = valorCarta(r) + 0.4; por = `sale Exiled Force y se lo lleva en la Main 2`; }
+      else if(sale > golpe){ b = 1.0 + valorCarta(r); por = `sale ${x.nombre} (${sale}) y le gana en esta misma batalla`; }
+      else if(ix.rol === "trade" && amenaza){ b = valorCarta(r) - 0.3; por = `sale ${x.nombre} y lo cambia`; }
+      if(b > (mejor?.b ?? 0)) mejor = { b, por };
+    }
+    if(!mejor) return null;
+    const coste = 0.3 + daño / 1000 * (v.lp.mio - daño <= 3000 ? 2 : 1);
+    const vale = mejor.b - coste;
+    return vale > 0.4 ? { vale, por: `${mejor.por}; me como ${daño}` } : null;
+  }
+
+  /* ══ LA NOTA DE UN COMBATE: atacante contra UN objetivo ══
+     Era el cuerpo del bucle de `valeAtacar`. Se saca aquí (01-11) para
+     que la ELECCIÓN DEL OBJETIVO use la misma cuenta que la decisión de
+     atacar: antes `valeAtacar` miraba floaters, Relinquished y demás, y
+     el objetivo se elegía después con "gano y no muero, el más valioso". */
+  function notaCombate(c, r, v, opciones = {}){
+    const infoC = infoDe(c);
+    /* ══ SISTEMA F · LO QUE YA HE VISTO, LO RECUERDO ══
+       Una tapada de la que ya conozco la identidad no es una
+       incógnita. E lo reportó por sus dos caras en dos partidas
+       seguidas: atacó a una defensa que sabía que no podía romper, y
+       no atacó a otra que sabía que sí. `conocida` la rellena
+       `ai/view.js` solo con lo que ha estado boca arriba. */
+    const recordada = r.bocaAbajo && r.conocida
+      ? { ...r, code:r.conocida.code, nombre:r.conocida.nombre,
+          datos:r.conocida.datos, bocaAbajo:false, defensa:true,
+          deMemoria:true }
+      : r;
+    const infoR = recordada.bocaAbajo ? {} : infoDe(recordada);
+    /* LA CUENTA DE ATAQUE NO SIEMPRE VALE. Es `IsMonsterDangerous` de
+       WindBot y es lo que faltaba aquí:
+         · Spirit Reaper no muere en combate por mucho ataque que le
+           eches, así que "le gano" es mentira.
+         · D.D. Warrior Lady y D.D. Assailant destierran a los dos: la
+           matas, sí, pero pierdes el tuyo. Es un cambio, no un regalo.
+       OJO con no pasarse: la primera versión marcaba también los muros
+       (Gravekeeper's Spy y compañía) y con eso el bot dejaba de pegarle
+       a una Spy boca arriba en ataque, que son 1200 y hay que matarla.
+       Para los muros ya están sus propios números; no hacen falta
+       banderas. Marcarlos costó dos puntos de victoria medidos. */
+    /* Los LP del RIVAL entran en la cuenta: Injection Fairy Lily pega
+       con 3400 si puede pagar 2000 (ver `atkEnCombate`). */
+    let mata = ganaCombate(c, recordada, v.lp.rival),
+        muero = muereAtacando(c, recordada, v.lp.rival);
+    /* ATAQUES IGUALADOS. `ganaCombate` pide ATK estrictamente mayor,
+       que es lo correcto para "me lo llevo gratis", pero con ataques
+       iguales mueren LOS DOS: es un cambio, no un suicidio, y aquí se
+       puntuaba -4. Por eso el Thunder Dragon robado con Mind Control
+       no atacaba al Breaker de 1600 y volvía intacto a su dueño al
+       acabar el turno (partida 1, turnos 5 y 8). */
+    if(!mata && !recordada.bocaAbajo && !recordada.defensa && atk(c) > 0
+       && atk(c) === atk(recordada))
+      mata = true;
+    if(exp("peligrosos") && infoR.inmuneCombate) mata = false;
+    let s;
+    if(exp("peligrosos") && infoR.peligroso && mata && !muero)
+      s = 0.8 + (valorCarta(recordada) - valorCarta(c));  // cambio, no regalo
+    else if(mata && !muero) s = 4 + poder(recordada)/1000;  // te lo llevas gratis
+    else if(mata && muero)  s = 1.0 + (valorCarta(recordada) - valorCarta(c));
+    else if(!mata && !muero) s = -0.6;                  // no pasa nada: no ataques
+    else                     s = -4;                    // suicidio
+    if(!mata && muero){
+      const cr = valeCrash(c, recordada, v);
+      if(cr){ s = 0.5 + cr.vale; traza(`me estrello con ${c.nombre}: ${cr.por}`, { valor:+s.toFixed(2) }); }
+    } else if(mata && muero && exp("crashFloater") && !c.prestado && rolDe(c) === "floater"
+              && FILTRO_FLOATER[canon(c.nombre ?? "")] && reclutables(v, c).length){
+      s += 0.6;    // un cambio con mi floater: él pierde su carta, yo repongo la mía
+    }
+    /* ══ SISTEMA G · UNA TAPADA NO ES UN "NO", ES UNA APUESTA ══
+       E, dos turnos seguidos: «no ataca a mi monstruo en defensa».
+       Tenía un Magician of Faith tapado —300/400— y enfrente un
+       Flying Kamakiri de 1400 que no se movió. La causa era un
+       umbral escrito a ojo (`atk > 1600`) que convertía toda tapada
+       por debajo de eso en `mata=false`, o sea en la rama de "no
+       pasa nada: no ataques".
+       Ahora la nota sale de la tabla medida de `apuestaContraTapada`:
+       lo que gano si me la llevo por delante, menos los LP que me
+       como cuando la defensa es mayor. Con 1400 la apuesta es 61%,
+       que es un ataque que hay que hacer; con 900 es 44% y no. */
+    if(recordada.bocaAbajo && !recordada.deMemoria){
+      const ap = apuestaContraTapada(atk(c));
+      /* Ganar aquí vale MUCHO menos que llevarse un monstruo
+         conocido —4 y pico ahí arriba—: lo que hay tapado suele ser
+         un monstruo de utilidad barato, y encima le doy su volteo
+         (Magician of Faith recupera, Dekoichi roba, Cyber Jar lo
+         revienta todo) tanto si lo mato como si no.
+         El 1.2 no es a ojo: es el número que deja la apuesta del
+         61% por encima del umbral de jugar (0.2) y la del 44% por
+         debajo. Las dos posiciones están en el banco, y la segunda
+         es el contraejemplo — sin él, "ataca siempre a las tapadas"
+         aprobaría igual. */
+      s = ap.prob * 1.2 - (1 - ap.prob) * (0.4 + ap.daño / 1200);
+      if(ap.prob > 0.5)
+        traza(`la tapada cae el ${Math.round(ap.prob*100)}% de las veces con ${atk(c)} de ataque`);
+    }
+    /* ══ SISTEMA B · ATACAR HACIA ARRIBA A PROPÓSITO ══
+       Hyper Hammerhead devuelve a la mano al monstruo con el que
+       combate. Contra algo que no puedo matar de ninguna otra forma,
+       perder el cuerpo y unos puntos de vida para quitarlo de en
+       medio puede ser buenísimo — y con la cuenta de siempre esto
+       salía -4, o sea "suicidio", y no se hacía nunca. */
+    if(!mata && (infoC.rebota || infoC.destierra)){
+      const trato = valeAtaqueSuicida(c, recordada, v,
+        { rebota:!!infoC.rebota, destierra:!!infoC.destierra });
+      if(trato && trato.vale > 0) s = Math.max(s, 1.2 + trato.vale);
+    }
+    /* Si la conozco de haberla visto, el resultado del combate no es
+       una apuesta: se apunta en el log para poder auditarlo. */
+    if(recordada.deMemoria && s > 0)
+      traza(`recuerdo que ${recordada.nombre} tiene ${def(recordada)} de defensa`);
+    /* Con plan defensivo, un cambio de golpes no compensa: cada
+       monstruo que se queda en el campo es un turno más de vida. */
+    if(exp("planBatalla") && PLAN.aguanta && mata && muero) s -= 2.0;
+    /* ══ UN FLOATER SE REPONE ══
+       E, 25-09 (Chaos Turbo, p3, T4): Gravekeeper's Spy (1200) contra
+       su Pyramid Turtle (1200): mueren los dos y la tortuga le saca un
+       Ryu Kokki de 2400 del mazo. Cambiar un cuerpo por un floater es
+       perder el cuerpo; matarlo gratis sigue valiendo (el daño y el
+       tempo), pero menos. */
+    if(exp("floaterCambio") && !recordada.bocaAbajo && rolDe(recordada) === "floater" && mata && !c.prestado
+       && !(exp("swapFloater") && recordada.mioRobado)){
+      s -= muero ? 1.8 : 1.0;
+    }
+    /* ══ LO QUE SALE DEL FLOATER PUEDE SER PEOR QUE EL FLOATER ══
+       E, 02-10 (Goat Control, p2, T4): Asura Priest mató al Vampire
+       Lord, luego a la Giant Rat (que sacó una Pyramid Turtle) y luego a
+       la Turtle, que sacó un Ryu Kokki de 2400. En la End Phase Asura
+       volvió a la mano: la mesa de la IA vacía y un 2400 que antes no
+       estaba. «Matarme la Pyramid Turtle abre la puerta a que saque Ryu
+       Kokki o Vampire Lord gratis». Si lo que sale le gana a lo que me
+       queda en la mesa (un espíritu no se queda), el ataque le regala
+       un monstruo mejor. */
+    /* ══ SI EL FLOATER ES MÍO, EL EFECTO TAMBIÉN (19-11) ══
+       Se lo di con Creature Swap (o me lo robó): al morir va a MI
+       cementerio y el reclutamiento es mío (check-floaters, caso 1).
+       Matarlo no le regala nada a él: me lo regala a mí. */
+    if(exp("swapFloater") && recordada.mioRobado && mata && !recordada.bocaAbajo && rolDe(recordada) === "floater"){
+      s += 1.2;
+      traza(`${recordada.nombre} es mío: al morir, el efecto me toca a mí`, { valor:+1.2 });
+    }
+    if(exp("floaterSale") && mata && !c.prestado && flotaEnCombate(recordada)
+       && !(exp("swapFloater") && recordada.mioRobado)){
+      const sale = loQueSacaFloater(recordada);
+      const meQueda = (infoC.espiritu || muero) ? 0 : atk(c);
+      if(sale > meQueda){
+        /* ══ DEPENDE DE SI TENGO CON QUÉ PARAR LO QUE SALE (19-11) ══
+           E: «depende de si tiene backrow para el Ryu Kokki o no». Con
+           una tapada que se lo lleve (Sakuretsu, Mirror Force, Torrential,
+           Bottomless, Ring, Book of Moon) matar la tortuga es buen golpe:
+           lo que salga se come la trampa. Con solo un Waboku o un Negate
+           Attack, gano un turno y nada más: la penalización de siempre.
+           Sin nada, le estoy regalando un monstruo mejor: no se ataca —si
+           lo que sale pega de verdad (1800+); lo de una Giant Rat se aguanta. */
+        const responde = b => { if(!b.bocaAbajo) return false;
+          const ib = infoDe(b), nb = canon(b.nombre ?? "");
+          return ["trapRemoval","trapMass","trick"].includes(ib.rol) || (ib.rol === "removal" && ib.rapida)
+                 || nb === "Bottomless Trap Hole"; };
+        const aguanta = b => b.bocaAbajo && infoDe(b).rol === "proteccionBatalla";
+        if(exp("floaterBackrow") && v.backrow.some(responde)){
+          s -= 0.6 + (sale - meQueda) / 2000;
+          traza(`lo que saque ${recordada.nombre} (${sale}) se come mi trampa`);
+        } else if(exp("floaterBackrow") && sale >= 1800 && !v.backrow.some(aguanta)){
+          s = Math.min(s, -1.0);
+          traza(`${recordada.nombre} saca un ${sale} y no tengo con qué pararlo: no la mato`);
+        } else s -= 2.0 + (sale - meQueda) / 1000;
+      }
+    }
+    return ajustesCombate(c, recordada, v, s, { mata, muero, infoC, ...opciones });
+  }
+
   function battlePhase(m, intento){
     const r = battlePhaseLibre(m, intento);
     if(r?.action === BA.SELECT_BATTLE || m.to_m2 || m.to_ep) return r;
@@ -2667,6 +3586,60 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
     traza(`tengo que atacar (no me dejan pasar de fase): ataco con el más fuerte`);
     return { type:R.SELECT_BATTLECMD, action:BA.SELECT_BATTLE, index:orden[intento % orden.length].i };
   }
+  /* La búsqueda de `asignacion`. Devuelve el orden de ataques del mejor
+     plan, o null si no mejora al de uno en uno. */
+  function asignarAtaques(ataques, rivales, v){
+    const A = ataques.filter(a => atk(a.c) > 0).slice(0, 5), Rv = rivales.slice(0, 5);
+    if(A.length < 2 || !Rv.length) return null;
+    const conocida = r => (r.bocaAbajo && r.conocida)
+      ? { ...r, datos:r.conocida.datos, nombre:r.conocida.nombre, bocaAbajo:false, defensa:true } : r;
+    const nota = A.map(a => Rv.map(r => notaCombate(a.c, r, v)));
+    /* ¿cae seguro? Solo lo que se ve (o se recuerda): una tapada es una apuesta */
+    const cae = A.map(a => Rv.map(r => { const x = conocida(r); if(x.bocaAbajo) return false;
+      const igual = !x.defensa && atk(a.c) === atk(x);
+      return (ganaCombate(a.c, x, v.lp.rival) || igual) && !infoDe(x).inmuneCombate; }));
+    const directo = a => 8 + atk(a.c) / 1000;
+    let mejor = null, pasos = 0;
+    const asign = new Array(A.length).fill(-1);       // -1 nada · 0..n-1 objetivo · n directo
+    const valor = () => {
+      let t = 0; const usados = new Set(); let todosCaen = true;
+      for(let i = 0; i < A.length; i++){ const k = asign[i]; if(k >= 0 && k < Rv.length){
+        if(usados.has(k)) return null; usados.add(k);
+        if(nota[i][k] <= 0.2) return null;
+        t += nota[i][k]; } }
+      for(let k = 0; k < Rv.length; k++) if(!(usados.has(k) && A.some((_, i) => asign[i] === k && cae[i][k]))) todosCaen = false;
+      for(let i = 0; i < A.length; i++) if(asign[i] === Rv.length){ if(!todosCaen) return null; t += directo(A[i]); }
+      return t;
+    };
+    const rec = i => {
+      if(++pasos > 40000) return;
+      if(i === A.length){ const t = valor(); if(t != null && (!mejor || t > mejor.t + 1e-9)) mejor = { t, a:[...asign] }; return; }
+      for(let k = -1; k <= Rv.length; k++){ asign[i] = k; rec(i + 1); }
+      asign[i] = -1;
+    };
+    rec(0);
+    if(!mejor || mejor.t <= 0) return null;
+    /* la voraz, con el mismo modelo: el de mejor nota primero, a su mejor objetivo libre */
+    let voraz = 0; { const libres = new Set(Rv.map((_, k) => k)); let caidos = 0;
+      const orden = A.map((a, i) => ({ i, p:Math.max(...nota[i]) })).sort((x, y) => y.p - x.p);
+      for(const { i } of orden){
+        let bk = -1, bn = 0.2;
+        for(const k of libres) if(nota[i][k] > bn){ bn = nota[i][k]; bk = k; }
+        if(bk >= 0){ voraz += bn; libres.delete(bk); if(cae[i][bk]) caidos++; }
+        else if(caidos === Rv.length) voraz += directo(A[i]);
+      } }
+    if(mejor.t <= voraz + 0.5) return null;
+    /* el orden: primero a los monstruos (los directos solo con la mesa limpia) */
+    const orden = [];
+    for(let i = 0; i < A.length; i++){ const k = mejor.a[i];
+      if(k >= 0 && k < Rv.length) orden.push({ a:A[i], uid:Rv[k].uid, nota:nota[i][k], directo:false }); }
+    orden.sort((x, y) => y.nota - x.nota);
+    for(let i = 0; i < A.length; i++) if(mejor.a[i] === Rv.length) orden.push({ a:A[i], uid:null, nota:directo(A[i]), directo:true });
+    if(!orden.length) return null;
+    const texto = orden.map(x => `${x.a.c.nombre} → ${x.directo ? "directo" : (Rv.find(r => r.uid === x.uid)?.bocaAbajo ? "tapada" : Rv.find(r => r.uid === x.uid)?.nombre)}`).join(", ");
+    return { orden, total:mejor.t, voraz, texto };
+  }
+
   function battlePhaseLibre(m, intento){
     const v = vistaDe(duel, yo, db, names);
     const ataques = (m.attacks||[]).map((l,i)=>{
@@ -2684,6 +3657,10 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
                         datos:db.get(c.code)??null,
                         atkReal:c.atkReal ?? null, defReal:c.defReal ?? null,
                         prestado: !!enVista?.prestado,
+                        /* Quién es y qué ha hecho este turno: si no ataca,
+                           ¿podría agacharse en la Main Phase 2? (exposición) */
+                        uid: c.uid ?? null, entroTurno: enVista?.entroTurno ?? null,
+                        volteoTurno: enVista?.volteoTurno ?? null, atacoTurno: enVista?.atacoTurno ?? null,
                         defensa:false, bocaAbajo:false } : null;
       return { i, c:mio };
     }).filter(a=>a.c);
@@ -2745,129 +3722,21 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
          ordena los ataques entre sí, y 2.5 sigue estando por encima del
          umbral de 0.2. Sirvió para recordar que hay que comprobar que un
          cambio hace algo antes de darlo por bueno.) */
-      let mejor = -9;
-      const infoC = infoDe(c);
-      for(const r of rivales){
-        /* ══ SISTEMA F · LO QUE YA HE VISTO, LO RECUERDO ══
-           Una tapada de la que ya conozco la identidad no es una
-           incógnita. E lo reportó por sus dos caras en dos partidas
-           seguidas: atacó a una defensa que sabía que no podía romper, y
-           no atacó a otra que sabía que sí. `conocida` la rellena
-           `ai/view.js` solo con lo que ha estado boca arriba. */
-        const recordada = r.bocaAbajo && r.conocida
-          ? { ...r, code:r.conocida.code, nombre:r.conocida.nombre,
-              datos:r.conocida.datos, bocaAbajo:false, defensa:true,
-              deMemoria:true }
-          : r;
-        const infoR = recordada.bocaAbajo ? {} : infoDe(recordada);
-        /* LA CUENTA DE ATAQUE NO SIEMPRE VALE. Es `IsMonsterDangerous` de
-           WindBot y es lo que faltaba aquí:
-             · Spirit Reaper no muere en combate por mucho ataque que le
-               eches, así que "le gano" es mentira.
-             · D.D. Warrior Lady y D.D. Assailant destierran a los dos: la
-               matas, sí, pero pierdes el tuyo. Es un cambio, no un regalo.
-           OJO con no pasarse: la primera versión marcaba también los muros
-           (Gravekeeper's Spy y compañía) y con eso el bot dejaba de pegarle
-           a una Spy boca arriba en ataque, que son 1200 y hay que matarla.
-           Para los muros ya están sus propios números; no hacen falta
-           banderas. Marcarlos costó dos puntos de victoria medidos. */
-        /* Los LP del RIVAL entran en la cuenta: Injection Fairy Lily pega
-           con 3400 si puede pagar 2000 (ver `atkEnCombate`). */
-        let mata = ganaCombate(c, recordada, v.lp.rival),
-            muero = muereAtacando(c, recordada, v.lp.rival);
-        /* ATAQUES IGUALADOS. `ganaCombate` pide ATK estrictamente mayor,
-           que es lo correcto para "me lo llevo gratis", pero con ataques
-           iguales mueren LOS DOS: es un cambio, no un suicidio, y aquí se
-           puntuaba -4. Por eso el Thunder Dragon robado con Mind Control
-           no atacaba al Breaker de 1600 y volvía intacto a su dueño al
-           acabar el turno (partida 1, turnos 5 y 8). */
-        if(!mata && !recordada.bocaAbajo && !recordada.defensa && atk(c) > 0
-           && atk(c) === atk(recordada))
-          mata = true;
-        if(exp("peligrosos") && infoR.inmuneCombate) mata = false;
-        let s;
-        if(exp("peligrosos") && infoR.peligroso && mata && !muero)
-          s = 0.8 + (valorCarta(recordada) - valorCarta(c));  // cambio, no regalo
-        else if(mata && !muero) s = 4 + poder(recordada)/1000;  // te lo llevas gratis
-        else if(mata && muero)  s = 1.0 + (valorCarta(recordada) - valorCarta(c));
-        else if(!mata && !muero) s = -0.6;                  // no pasa nada: no ataques
-        else                     s = -4;                    // suicidio
-        /* ══ SISTEMA G · UNA TAPADA NO ES UN "NO", ES UNA APUESTA ══
-           E, dos turnos seguidos: «no ataca a mi monstruo en defensa».
-           Tenía un Magician of Faith tapado —300/400— y enfrente un
-           Flying Kamakiri de 1400 que no se movió. La causa era un
-           umbral escrito a ojo (`atk > 1600`) que convertía toda tapada
-           por debajo de eso en `mata=false`, o sea en la rama de "no
-           pasa nada: no ataques".
-           Ahora la nota sale de la tabla medida de `apuestaContraTapada`:
-           lo que gano si me la llevo por delante, menos los LP que me
-           como cuando la defensa es mayor. Con 1400 la apuesta es 61%,
-           que es un ataque que hay que hacer; con 900 es 44% y no. */
-        if(recordada.bocaAbajo && !recordada.deMemoria){
-          const ap = apuestaContraTapada(atk(c));
-          /* Ganar aquí vale MUCHO menos que llevarse un monstruo
-             conocido —4 y pico ahí arriba—: lo que hay tapado suele ser
-             un monstruo de utilidad barato, y encima le doy su volteo
-             (Magician of Faith recupera, Dekoichi roba, Cyber Jar lo
-             revienta todo) tanto si lo mato como si no.
-             El 1.2 no es a ojo: es el número que deja la apuesta del
-             61% por encima del umbral de jugar (0.2) y la del 44% por
-             debajo. Las dos posiciones están en el banco, y la segunda
-             es el contraejemplo — sin él, "ataca siempre a las tapadas"
-             aprobaría igual. */
-          s = ap.prob * 1.2 - (1 - ap.prob) * (0.4 + ap.daño / 1200);
-          if(ap.prob > 0.5)
-            traza(`la tapada cae el ${Math.round(ap.prob*100)}% de las veces con ${atk(c)} de ataque`);
-        }
-        /* ══ SISTEMA B · ATACAR HACIA ARRIBA A PROPÓSITO ══
-           Hyper Hammerhead devuelve a la mano al monstruo con el que
-           combate. Contra algo que no puedo matar de ninguna otra forma,
-           perder el cuerpo y unos puntos de vida para quitarlo de en
-           medio puede ser buenísimo — y con la cuenta de siempre esto
-           salía -4, o sea "suicidio", y no se hacía nunca. */
-        if(!mata && (infoC.rebota || infoC.destierra)){
-          const trato = valeAtaqueSuicida(c, recordada, v,
-            { rebota:!!infoC.rebota, destierra:!!infoC.destierra });
-          if(trato && trato.vale > 0) s = Math.max(s, 1.2 + trato.vale);
-        }
-        /* Si la conozco de haberla visto, el resultado del combate no es
-           una apuesta: se apunta en el log para poder auditarlo. */
-        if(recordada.deMemoria && s > 0)
-          traza(`recuerdo que ${recordada.nombre} tiene ${def(recordada)} de defensa`);
-        /* Con plan defensivo, un cambio de golpes no compensa: cada
-           monstruo que se queda en el campo es un turno más de vida. */
-        if(exp("planBatalla") && PLAN.aguanta && mata && muero) s -= 2.0;
-        /* ══ UN FLOATER SE REPONE ══
-           E, 25-09 (Chaos Turbo, p3, T4): Gravekeeper's Spy (1200) contra
-           su Pyramid Turtle (1200): mueren los dos y la tortuga le saca un
-           Ryu Kokki de 2400 del mazo. Cambiar un cuerpo por un floater es
-           perder el cuerpo; matarlo gratis sigue valiendo (el daño y el
-           tempo), pero menos. */
-        if(exp("floaterCambio") && !recordada.bocaAbajo && rolDe(recordada) === "floater" && mata && !c.prestado){
-          s -= muero ? 1.8 : 1.0;
-        }
-        /* ══ LO QUE SALE DEL FLOATER PUEDE SER PEOR QUE EL FLOATER ══
-           E, 02-10 (Goat Control, p2, T4): Asura Priest mató al Vampire
-           Lord, luego a la Giant Rat (que sacó una Pyramid Turtle) y luego a
-           la Turtle, que sacó un Ryu Kokki de 2400. En la End Phase Asura
-           volvió a la mano: la mesa de la IA vacía y un 2400 que antes no
-           estaba. «Matarme la Pyramid Turtle abre la puerta a que saque Ryu
-           Kokki o Vampire Lord gratis». Si lo que sale le gana a lo que me
-           queda en la mesa (un espíritu no se queda), el ataque le regala
-           un monstruo mejor. */
-        if(exp("floaterSale") && mata && !c.prestado && flotaEnCombate(recordada)){
-          const sale = loQueSacaFloater(recordada);
-          const meQueda = (infoC.espiritu || muero) ? 0 : atk(c);
-          if(sale > meQueda) s -= 2.0 + (sale - meQueda) / 1000;
-        }
-        mejor = Math.max(mejor, s);
-      }
+      let mejor = -9, contra = null;
+      for(const r of rivales){ const n = notaCombate(c, r, v); if(n > mejor){ mejor = n; contra = r; } }
       /* Un monstruo prestado no tiene futuro: cambiarlo por lo que sea es
          ganancia, porque la alternativa es devolvérselo entero. */
       if(c.prestado) mejor += 3.0;
       /* Y una carta clave del plan no se cambia por cualquier cosa: el
-         Airknight que te gana la partida no muere contra un 1900. */
-      if(exp("planBatalla") && mejor < 3) mejor -= PLAN.peso(c.nombre) * 0.6;
+         Airknight que te gana la partida no muere contra un 1900.
+         OJO (examen 14-11): eso es contra lo que puede MATARLO. Contra una
+         tapada en defensa el atacante no muere en combate, y el freno
+         dejaba a un Ryu Kokki de 2400 sin atacar a una tapada que cae el
+         100 % de las veces (los pros atacan). */
+      const arriesga = !contra || !exp("planBatallaRiesgo")
+        || (!contra.bocaAbajo && !contra.defensa && atk(contra) >= atk(c))
+        || (!contra.bocaAbajo && muereAtacando(c, contra, v.lp.rival));
+      if(exp("planBatalla") && mejor < 3 && arriesga) mejor -= PLAN.peso(c.nombre) * 0.6;
       return mejor;
     };
 
@@ -3020,6 +3889,32 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
     const prudente = !trampasFuera && v.tapadasRival>=2 && v.monstruos.length>=3
                      && ventaja(v)>2 && v.lp.rival>3000;
     let lista = prudente ? puntuados.slice(0,1) : puntuados;
+    /* ══ QUIÉN ATACA A QUIÉN: LA BATALLA ENTERA (14-11) ══
+       Cada atacante se puntuaba por SU mejor objetivo y el objetivo se
+       elegía después, con la misma cuenta: el más fuerte primero, contra
+       lo más gordo. Eso es una asignación voraz, y falla justo donde un
+       jugador no falla: con un 2400 y un 1700 delante de un 1600 boca
+       arriba y un 2100, el 2400 se iba al 1600 y el 1700 ya no podía con
+       nada. El examen contra los pros (`examen-replays.mjs`) lo cuenta
+       como «mismo objetivo, otro atacante» y «el pro mata y luego pega
+       directo»: el pro gasta en cada objetivo el atacante JUSTO.
+       Se buscan todas las asignaciones (cinco contra cinco como mucho):
+       cada atacante a un objetivo, a nada, o directo si lo que hay
+       delante cae seguro antes. La nota de cada pareja es `notaCombate`
+       —la misma de siempre, con trampas, floaters y exposición— y el
+       directo vale lo que vale en `valeAtacar`. Solo manda si gana a la
+       voraz por más de medio punto: si no, se queda lo de siempre. Fuera
+       con letal (ya lo busca `letalExacto`), con la mesa prudente y con
+       BLS o Asura Priest, que atacan más de una vez. */
+    let planAsignado = null;
+    if(exp("asignacion") && intento === 0 && !prudente && rivales.length && ataques.length >= 2
+       && !ataques.some(a => infoDe(a.c).dobleAtaque || infoDe(a.c).atacaTodos)){
+      planAsignado = asignarAtaques(ataques, rivales, v);
+      if(planAsignado){
+        traza(`batalla entera: ${planAsignado.texto} (${planAsignado.total.toFixed(1)} contra ${planAsignado.voraz.toFixed(1)} atacando de uno en uno)`);
+        lista = planAsignado.orden.map(x => ({ ...x.a, p:x.nota, objetivoUid:x.uid }));
+      }
+    }
     /* ══ PRIMERO EL CEBO (contexto) ══
        Principio (Lessons of the Game: «no evites las trampas, cébalas»
        con monstruos baratos como Sangan o Sinister Serpent). Con backrow
@@ -3039,6 +3934,7 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
       }
     }
 
+    if(planAsignado && intento === 0 && lista[0]) objetivoLetal = lista[0].objetivoUid ?? null;
     if(intento < lista.length){
       ultimoAtacante = lista[intento].c;
       traza(`ataca con ${lista[intento].c.nombre}`, { valor:+lista[intento].p.toFixed(2) });
@@ -3189,6 +4085,50 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
         }
       }
     }
+
+    /* ══ LETAL DE QUEMA EN LA VENTANA DE CADENA (01-11) ══
+       Lo mismo que en la Main Phase (`planDeQuema`), con mis trampas y
+       mágicas rápidas. El orden con Ojama Trio importa al revés que en mi
+       turno: dentro de UNA cadena resuelve primero lo de arriba, así que
+       Just Desserts va DEBAJO (primero) y Ojama Trio encima, para que las
+       fichas estén en su campo cuando Desserts cuente monstruos. */
+    if(exp("letalQuema")){
+      const zonasLibres = 5 - v.monstruosRival.length;
+      const piezas = []; let regalo = null;
+      for(const o of opciones){
+        const l = m.selects[o.i];
+        if(l.controller !== yo) continue;
+        const t = textoDe(o.c), tipo = Number(o.c.datos?.type ?? 0);
+        if(!(tipo & 0x6)) continue;
+        const rg = leerRegalo(t, o.c.datos);
+        if(rg?.fichas){ if(zonasLibres >= rg.cuerpos) regalo = { i:o.i, n:rg.cuerpos, nombre:o.c.nombre }; continue; }
+        if(/\bTribute\b/i.test(t)) continue;
+        const d = quemaMedible(t, v);
+        if(d != null && d > 0) piezas.push({ i:o.i, d, t, nombre:o.c.nombre });
+      }
+      piezas.sort((a, b) => b.d - a.d);
+      const total = piezas.reduce((s, f) => s + f.d, 0);
+      if(piezas.length && total >= v.lp.rival){
+        traza(`LETAL DE QUEMA en cadena: ${total} y le quedan ${v.lp.rival} (${piezas[0].nombre})`);
+        return { type:R.SELECT_CHAIN, index:piezas[0].i };
+      }
+      if(regalo){
+        const fichas = Array.from({ length: regalo.n }, () => ({ bocaAbajo:false, defensa:true, datos:{ type:0x4001, attack:0, defense:1000, level:2 } }));
+        const v2 = { ...v, monstruosRival:[...v.monstruosRival, ...fichas] };
+        /* Lo mío que ya está en la cadena, debajo: Ojama encima lo multiplica. */
+        const debajo = (duel.cadena ?? []).filter(e => e.controller === yo)
+          .reduce((s, e) => s + (quemaMedible(names[e.code]?.desc ?? "", v2) ?? 0), 0);
+        if(debajo > 0 && debajo + total >= v.lp.rival){
+          traza(`LETAL DE QUEMA en cadena: ${regalo.nombre} encima, con sus fichas lo de debajo hace ${debajo}`);
+          return { type:R.SELECT_CHAIN, index:regalo.i };
+        }
+        const total2 = piezas.reduce((s, f) => s + (quemaMedible(f.t, v2) ?? f.d), 0);
+        if(piezas.length && total2 >= v.lp.rival){
+          traza(`LETAL DE QUEMA en cadena: ${piezas[0].nombre} debajo, ${regalo.nombre} irá encima (${total2})`);
+          return { type:R.SELECT_CHAIN, index:piezas[0].i };
+        }
+      }
+    }
     /* ── SU PRIORIDAD, PASADA: responder antes de que use el efecto ── */
     const suRecien = exp("prioridadRival") ? recienInvocadoSuyo(v, arriba) : null;
     const sinReserva = new Set();
@@ -3236,6 +4176,28 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
             const golpe = detras.reduce((t, x) => t + atkEnCombate(x, v.lp.rival), 0);
             if(golpe >= v.lp.mio) return 6;
           }
+          return 0.5;
+        }
+        /* ══ EN SU END PHASE, SOLO SI LAS FICHAS TIENEN TRABAJO (19-11) ══
+           E: «la IA usa Scapegoat demasiado pronto. No espera a que haga un
+           ataque directo o a que destruya la carta… hacerlo demasiado
+           temprano hace perder valor al Scapegoat o atasca la mesa no
+           dejándole invocar al turno siguiente si solo tiene 4 tokens y 1
+           monstruo set». La End Phase del rival es el sitio para esquivar
+           el «no puedes invocar este turno» cuando en MI turno voy a usar
+           las fichas: Metamorphosis, Creature Swap, Cannon Soldier, o
+           tributos que no tengo. Sin eso, se guarda: el ataque directo y
+           la carta que va a destruirla (Heavy Storm, MST, Breaker) la sacan
+           cuando toca, y mientras tanto él no sabe qué es. */
+        if(exp("cabrasEspera")){
+          const enManoOMesa = n2 => [...v.mano, ...v.backrow, ...v.monstruos].some(x => canon(x.nombre ?? "") === n2);
+          const cuerpos = v.monstruos.filter(x => !esFicha(x)).length;
+          const pideTributos = v.mano.some(h => ((Number(h.datos?.type) || 0) & 0x1)
+            && (Number(h.datos?.level) || 0) >= 5 && !((Number(h.datos?.type) || 0) & 0x40)
+            && cuerpos < ((Number(h.datos?.level) || 0) >= 7 ? 2 : 1));
+          const uso = enManoOMesa("Metamorphosis") || enManoOMesa("Creature Swap")
+                   || enManoOMesa("Cannon Soldier") || pideTributos;
+          if(uso) return 3;
           return 0.5;
         }
         return v.monstruos.length===0 ? 6 : 3;
@@ -3567,6 +4529,21 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
            se pierde un duelo ganado. */
         if(!exp("counter")) return 2;
         if(v.lp.mio <= 2500) return -1;
+        /* ══ MEDIA VIDA CONTRA UN MAZO QUE PEGA (19-11) ══
+           Midiendo los mazos nuevos (Relinquished, Warrior Aggro, Umi: los
+           tres con tres Solemn) contra Beastdown: Solemn a un Delinquent Duo
+           a 8000 y muerto en el turno 8. Lo que cuesta media vida depende de
+           cuánto me pega él: si después de pagar aguanto dos turnos o menos,
+           solo vale para lo que decide la partida; si aguanto uno, nada. */
+        let exige = 1.6;
+        if(exp("solemnReloj")){
+          const pos = lectura(v);
+          const porTurno = (pos.dañoPorTurno ?? 0) + (pos.quema?.porTurno ?? 0);
+          const quedan = v.lp.mio - Math.ceil(v.lp.mio / 2);
+          const reloj = porTurno > 0 ? Math.ceil(quedan / porTurno) : 99;
+          if(reloj <= 1) return -1;
+          if(reloj <= 2) exige = 2.2;
+        }
         /* ══ SIN CADENA, LO QUE SE NIEGA ES UNA INVOCACIÓN ══
            E, 03-10 (Reino, T5): «igual merecía la pena Solemn Judgment a
            mi Mobius: había opción de que destruyese el Judgment con su
@@ -3588,11 +4565,11 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
           const vale = valorCarta(recien) + (nivel >= 5 ? 0.5 : 0) + (barre ? 1.0 : 0) + (meGana && atk(recien) >= 1900 ? 0.3 : 0);
           /* Esa invocación ES «la carta que decide»: la reserva del contador
              no la guarda para otra (y si barre, la Solemn no llega a otra). */
-          if(vale >= 1.6) sinReserva.add(o.i);
-          return vale >= 1.6 ? 5.0 : vale >= 1.3 ? 2.6 : 0.4;
+          if(vale >= exige) sinReserva.add(o.i);
+          return vale >= exige ? 5.0 : (vale >= 1.3 && exige <= 1.6) ? 2.6 : 0.4;
         }
         const vale = negando ? valorCarta(negando) : 1.0;
-        return vale>=1.6 ? 5.0 : vale>=1.3 ? 2.6 : 0.4;
+        return vale>=exige ? 5.0 : (vale>=1.3 && exige <= 1.6) ? 2.6 : 0.4;
       }
       if(inf.rol==="removal" && inf.rapida){
         // Ring of Destruction: rematar, o llevarse algo gordo
@@ -3887,6 +4864,21 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
       });
       const buenos = cand.filter(c=>c.gano && !c.muero).sort((a,b)=>b.valor-a.valor);
       let elegido = buenos[0] ?? cand.sort((a,b)=>poder(a.objetivo)-poder(b.objetivo))[0];
+      /* ══ EL OBJETIVO, CON LA MISMA CUENTA QUE EL ATAQUE (01-11) ══
+         `valeAtacar` decidía atacar mirando floaters, protecciones y cómo
+         queda el atacante; luego el objetivo se elegía con «gano, no muero,
+         el más valioso», y un Relinquished de 0 con su equipo era el más
+         valioso. Ahora gana el de mejor `notaCombate`. */
+      if(exp("objetivoCompleto")){
+        const vB = vistaDe(duel, yo, db, names);
+        let mejor = null;
+        for(const x of cand){
+          const enV = vB.monstruosRival.find(y => y.uid != null && y.uid === x.objetivo.uid);
+          x.nota = enV ? notaCombate(ultimoAtacante, enV, vB) : (x.gano && !x.muero ? 4 : -1);
+          if(!mejor || x.nota > mejor.nota + 1e-9 || (Math.abs(x.nota - mejor.nota) < 1e-9 && x.valor > mejor.valor)) mejor = x;
+        }
+        if(mejor) elegido = mejor;
+      }
       if(objetivoLetal != null){
         const k = lista.findIndex(l => duel.at(l.controller, l.location, l.sequence)?.uid === objetivoLetal);
         if(k >= 0) elegido = cand.find(x => x.i === k) ?? elegido;
@@ -4038,7 +5030,8 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
               + (duel.atacante && real(x)?.uid === duel.atacante.uid ? 2 : 0)
               /* lo que ya atacó este turno no va a pegar más: tumbarlo no corta nada */
               + ([8,16,32,64,128].includes(duel.phase) && duel.turnPlayer !== yo && real(x)?.atacoTurno === duel.turnCount && real(x)?.uid !== duel.atacante?.uid ? -3 : 0);
-        const mejor = caraArriba.sort((a,b)=>(nota(b)+ajusteTumbar(b))-(nota(a)+ajusteTumbar(a)))[0];
+        const llave = x => llaveRival(x.c);
+        const mejor = caraArriba.sort((a,b)=>(nota(b)+ajusteTumbar(b)+llave(b))-(nota(a)+ajusteTumbar(a)+llave(a)))[0];
         traza(`objetivo boca arriba: ${mejor.c.nombre}`);
         return { type:R.SELECT_CARD, indicies:[mejor.i] };
       }
@@ -4161,6 +5154,17 @@ export function crearCerebro({ X, duel, db, names, nivel="normal", yo=1, log, la
         }
         if(exp("planDescarte") && PLAN.esMotor(c.nombre)) val += 0.6;
         return val;                            // menor es mejor
+      }
+      /* Creature Swap mío: lo que doy es el espíritu que vuelve a mi mano
+         en la End Phase (ver `swapEspiritu`). */
+      if(esCoste && exp("swapEspiritu") && l.location===4 && l.controller===yo){
+        const top = duel.cadena?.at(-1);
+        if(top?.controller === yo && canon(names[top.code]?.name ?? "") === "Creature Swap"){
+          const x = duel.at(l.controller, l.location, l.sequence);
+          if(x && !(l.position & 0x0a) && infoDe(c).espiritu
+             && (x.entroTurno === duel.turnCount || x.volteoTurno === duel.turnCount)) return -5;
+          if(x && !(l.position & 0x0a) && rolDe(c) === "floater" && FILTRO_FLOATER[canon(c.nombre ?? "")]) return -4;
+        }
       }
       if(esCoste) return val;                            // menor es mejor
       /* ══ MST EN SU END PHASE: A LO QUE ACABA DE COLOCAR ══

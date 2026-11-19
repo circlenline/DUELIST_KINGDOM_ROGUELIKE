@@ -11,7 +11,7 @@ const { makeTrivialResolver } = await import(process.cwd()+"/src/trivial.js");
 const N = Number(process.argv[2] ?? 60), nivel = process.argv[3] ?? "experto";
 const trivial = makeTrivialResolver(X), gen = makeAutoPlayer(X);
 const nom = c => (R.names[c]?.name ?? "").replace(/ \((GOAT|Pre-Errata)\)/,"");
-const DAÑINAS = new Set(["Book of Moon","Nobleman of Crossout","Smashing Ground","Mystical Space Typhoon","Dust Tornado","Sakuretsu Armor","Ring of Destruction","Snatch Steal","Breaker the Magical Warrior","Exiled Force","Tribe-Infecting Virus","Night Assailant","Magic Cylinder","Enemy Controller"]);
+const DAÑINAS = new Set([...(process.env.AUDITAR_EXTRA ?? "").split(",").filter(Boolean), "Book of Moon","Nobleman of Crossout","Smashing Ground","Mystical Space Typhoon","Dust Tornado","Sakuretsu Armor","Ring of Destruction","Snatch Steal","Breaker the Magical Warrior","Exiled Force","Tribe-Infecting Virus","Night Assailant","Magic Cylinder","Enemy Controller"]);
 const st = { turnos:0, manoFin:0, manoVacia:0, jugadasTurno:0, propias:{}, ajenas:{}, ganador:[0,0] };
 for(let i=0;i<N;i++){
   const s=9000+i*7919, r=R.xorshift(s);

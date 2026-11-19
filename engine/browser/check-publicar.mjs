@@ -44,7 +44,7 @@ else ok("el juego arranca en inglés por defecto");
     : mal("la contraseña de depuración solo va como huella");
   /goatDebug"\) === "1"|getItem\("goatDebug"\)/.test(html) ? ok("la depuración depende de goatDebug (apagada por defecto)")
                                                           : mal("la depuración depende de goatDebug");
-  /Build 1\.2/.test(html) ? ok("el menú dice Build 1.2") : mal("el menú dice Build 1.2");
+  /Build 1\.3/.test(html) ? ok("el menú dice Build 1.3") : mal("el menú dice Build 1.3");
   /mesa.real|SpeechRecognition/i.test(html) ? mal("la mesa real no va en la versión pública") : ok("la mesa real no va en la versión pública");
   const borr = []; (function anda(d){ for(const e of require("node:fs").readdirSync(d,{withFileTypes:true})){
     if(e.name === ".git") continue; const p = d+"/"+e.name;
@@ -75,7 +75,7 @@ else ok(`las ${imgs.length} capturas del README existen`);
 
 /* 6 · y habla del modo historia, que es la mitad del juego */
 for(const t of ["Duelist Kingdom","Star Chip","Mastery","pack","Swiss","side deck","Play with a friend",
-                 "Disclaimer","Save backup","Build 1.2","Report"])
+                 "Disclaimer","Save backup","Build 1.3","Report"])
   rd.includes(t) ? ok(`el README explica «${t}»`) : mal(`el README no menciona «${t}»`);
 
 /* ══════════════════════════════════════════════════════════════════

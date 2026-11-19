@@ -5,6 +5,8 @@ set -e
 W="$(cd "$(dirname "$0")" && pwd)"
 echo "── datos ──"
 [ -f "$W/data/full_cards.json" ] || python3 "$W/data/export_cards.py"
+echo "── Retro Pack 2 (modo draft) ──"
+( cd "$W/draft" && node importar-rp02.mjs | head -1 )
 echo "── scripts Lua de todo el pool ──"
 cd "$W/browser" && node build-scripts.mjs "$W/data/goat-pool.json"
 echo "── simulador ──"
@@ -17,6 +19,7 @@ node check-dom.mjs | tail -2
 node check-activar.mjs | tail -1
 node check-sync.mjs 2>&1 | tail -1
 node check-ia-propias.mjs 2>&1 | tail -1
+node check-ventanas.mjs 2>&1 | tail -1
 node check-tapadas.mjs 2>&1 | tail -1
 node check-mudas.mjs 2>&1 | tail -1
 node check-cartas.mjs 2>&1 | tail -1
@@ -76,6 +79,8 @@ node check-secretos.mjs 2>&1 | tail -1
 node estrategia.mjs 2>&1 | tail -1
 # Tsukuyomi y Book of Moon: los rulings que usa planTumbar, preguntados al motor.
 node check-tsukuyomi.mjs 2>&1 | tail -1
+# Floaters: Creature Swap con mi floater y el crash, preguntados al motor.
+node check-floaters.mjs 2>&1 | tail -1
 # Los rulings del torneo del 25-09 (Book of Moon a mi volteo, Threatening Roar, Book of Life y Kycoo).
 node check-rulings-2509.mjs 2>&1 | tail -1
 # La prioridad de 2005: el motor, la ventana del humano en «auto» y lo que la IA da por hecho.
@@ -84,3 +89,6 @@ node check-prioridad.mjs 2>&1 | tail -1
 node check-moneda.mjs 2>&1 | tail -1
 # Replays de torneo de DuelingBook: que el importador lea bien la final del GFCEU 2026 y el marcador se empaquete.
 ( cd "$W/replays" && node build-bookmarklet.mjs >/dev/null && node check-replays.mjs 2>&1 | tail -1 )
+# Modo draft: la IA de picks, el constructor y el suizo (sin motor), y las 101 cartas EN el motor.
+node check-draft.mjs 2>&1 | tail -1
+node check-draft-cartas.mjs 40 2>&1 | tail -1

@@ -23,20 +23,24 @@ export const JUGADORES = 32, RONDAS_SUIZAS = 5, CORTE = 16;
 export const NOMBRES_CORTE = ["Octavos", "Cuartos", "Semifinal", "Final"];
 
 /* ── Los mazos de los bots: aleatorios pero con el peso del meta ──
-   Los pesos salen de lo que se juega de verdad: en los 267 duelos de
-   replays importados, Warrior sale 190 veces, Chaos Turbo 139 y Chaos
-   Control 86, frente a 17 de Gate y 8 de Burn. Con esto, de 31 bots salen
-   de media unos 17-18 de tier S (48 de 85 de peso) y menos de uno de
-   cada mazo de tier C. */
+   Los pesos salían de lo que se juega de verdad (en los replays
+   importados Warrior sale 190 veces, Chaos Turbo 139 y Chaos Control 86,
+   frente a 17 de Gate y 8 de Burn), y con 12 a cada tier S la mitad de
+   los bots eran Goat Control o Chaos. La comunidad lo dijo claro (19-11):
+   «demasiadas variaciones de Chaos Control; debería haber aggro,
+   control, combo, midrange». Ahora el tier S pesa la mitad, entran
+   cuatro mazos más (Earth Aggro, Warrior Aggro, Umi, Relinquished) y el
+   aggro sale en uno de cada cuatro bots. */
 export const PESOS = {
-  "Goat Control · Worlds 2020": 12, "Chaos Turbo · Worlds 2020": 12,
-  "Chaos Control": 12, "Warrior Goat Control": 12,
-  "Emissary Goat Control": 5, "Horus Goat Control": 5,
-  "Phoenix Goat Control": 5, "Zombie Goat Control": 5,
-  "Bazoo Return · Worlds": 2, "Monarch": 2, "Clown Control": 2,
+  "Goat Control · Worlds 2020": 5, "Chaos Turbo · Worlds 2020": 5,
+  "Chaos Control": 4, "Warrior Goat Control": 5,
+  "Emissary Goat Control": 3, "Horus Goat Control": 3,
+  "Phoenix Goat Control": 3, "Zombie Goat Control": 3,
+  "Bazoo Return · Worlds": 2, "Monarch": 3, "Clown Control": 2,
   "Cat Control": 2, "Burn Goat Control": 2,
-  "PACMAN · DGz Live 212": 1, "Beastdown": 1, "Gravekeeper": 1, "Empty Jar": 1,
-  "Reasoning Gate OTK": 1, "Final Countdown": 1, "Library FTK": 1,
+  "PACMAN · DGz Live 212": 2, "Beastdown": 3, "Gravekeeper": 2, "Empty Jar": 1,
+  "Reasoning Gate OTK": 2, "Final Countdown": 1, "Library FTK": 1,
+  "Earth Aggro": 4, "Warrior Aggro": 3, "Umi · Water Aggro": 2, "Relinquished Control": 2,
 };
 export const pesoDe = nombre => PESOS[nombre] ?? 1;
 
@@ -77,15 +81,34 @@ function sortearPeso(nombres, r){
 /* ══ CREAR ══
    `mazos`: los nombres de los mazos meta disponibles (los bots salen de
    ahí). `miMazo`: el nombre del mazo de E, que puede ser uno suyo. */
-export function nuevoSuizo({ semilla = String(Date.now()), miNombre = "Tú", miMazo, mazos }){
+export function nuevoSuizo({ semilla = String(Date.now()), miNombre = "Tú", miMazo, mazos, avatares = [], miAvatar = null }){
   const s = { v: SUIZO_VERSION, semilla: String(semilla), azar: semillaNum(semilla),
               fase: "suizo", ronda: 0, jugadores: [], rondas: [], cuadro: [], abandono: false };
   const r = azar(s);
   const nicks = barajar(NICKS, r).slice(0, JUGADORES - 1);
-  s.jugadores.push({ id: 0, nombre: miNombre, mazo: miMazo, yo: true, sorteo: r() });
+  s.jugadores.push({ id: 0, nombre: miNombre, mazo: miMazo, yo: true, sorteo: r(), avatar: miAvatar });
   nicks.forEach((n, k) => s.jugadores.push({ id: k + 1, nombre: n, mazo: sortearPeso(mazos, r), yo: false, sorteo: r() }));
+  /* ══ CADA BOT CON SU CARA (19-11) ══
+     La comunidad: «siempre eres Yugi y el rival siempre Fake Kaiba o
+     Roland». Las caras se reparten con un azar APARTE (otra semilla), para
+     que los emparejamientos y los mazos de una semilla sigan siendo los de
+     siempre. Ni la tuya ni la de Roland, que es el que reparte en el duelo
+     libre; si no hay bastantes, se repiten. */
+  const libres = avatares.filter(a => a !== miAvatar && a !== "roland");
+  if(libres.length){
+    const rA = azar({ azar: semillaNum(s.semilla + "·caras") });
+    const orden = barajar(libres, rA);
+    s.jugadores.filter(j => !j.yo).forEach((j, k) => { j.avatar = orden[k % orden.length]; });
+  }
   emparejar(s);
   return s;
+}
+/* La cara de un jugador; los torneos guardados antes de que existieran
+   las caras sacan una fija de su número. */
+export function avatarDe(s, j, avatares = []){
+  if(j?.avatar) return j.avatar;
+  const libres = avatares.filter(a => a !== "roland");
+  return libres.length ? libres[(Number(j?.id) || 0) % libres.length] : null;
 }
 
 /* ══ RESULTADOS ══ */

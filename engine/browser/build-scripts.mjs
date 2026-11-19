@@ -15,6 +15,11 @@ const LIBS=["constant.lua","utility.lua","debug_utility.lua","chain.lua",
   ...readdirSync(S).filter(f=>f.startsWith("proc_"))];
 
 const codes=JSON.parse(readFileSync(process.argv[2],"utf-8"));
+/* El modo draft (Retro Pack 2) trae 7 cartas que no están en el pool de
+   Goat (Gorz, Yata, Light and Darkness Dragon…). Sus scripts van también:
+   sin ellos entrarían mudas al duelo. Ver engine/draft/importar-rp02.mjs. */
+{ const f = path.join(RAIZ, "engine", "data", "draft", "rp02.json");
+  if(existsSync(f)) for(const c of JSON.parse(readFileSync(f,"utf-8")).cartas) codes.push(c.id); }
 const cardsRaw=JSON.parse(readFileSync(path.join(RAIZ,"engine","data","full_cards.json"),"utf-8"));
 const bundle={}; let missing=[], viaAlias=0;
 for(const name of LIBS){ const f=find(name); if(f) bundle[name]=parchear(name, readFileSync(f,"utf-8")); else missing.push(name); }

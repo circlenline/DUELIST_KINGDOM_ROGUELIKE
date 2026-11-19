@@ -218,15 +218,19 @@ console.log("═══ LA IA Y SUS PROPIAS CARTAS ═══\n");
 
 /* ── 7. Scapegoat: al final del turno rival, no en su Main Phase 1 ── */
 {
-  const monta = (fase) => {
-    const d = mesa({ mios:{ mt:[{carta:"Scapegoat"}] }, turnPlayer:1, fase });
+  const monta = (fase, mano = []) => {
+    const d = mesa({ mios:{ mt:[{carta:"Scapegoat"}], mano }, turnPlayer:1, fase });
     const sg = d.zones[0][L.SZONE][0];
     return cerebro(d)({ type:T.SELECT_CHAIN, player:0, forced:false, selects:[ref(sg)] }, 0);
   };
   comprueba("no quema Scapegoat en la Main Phase 1 del rival",
     monta(0x4)?.index == null);
-  comprueba("la encadena en la End Phase rival",
-    monta(0x200)?.index === 0);
+  /* 19-11 (E: «la IA usa Scapegoat demasiado pronto»): en su End Phase solo
+     si en mi turno voy a usar las fichas. */
+  comprueba("la encadena en la End Phase rival si tengo uso para las fichas (Metamorphosis)",
+    monta(0x200, ["Metamorphosis"])?.index === 0);
+  comprueba("y sin uso para las fichas, la guarda para el ataque directo",
+    monta(0x200)?.index == null);
   /* 02-10 (Warrior, G1 T2): en batalla solo con el ataque directo ya
      declarado; abrir la Battle Phase no basta. */
   const directo = () => {

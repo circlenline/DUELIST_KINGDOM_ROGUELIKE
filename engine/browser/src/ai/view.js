@@ -143,6 +143,12 @@ export function vistaDe(duel, yo, db, names){
     /* Turnos en que entró, se volteó o atacó: todo público (ver duel.mjs). */
     entroTurno: c.entroTurno ?? null, volteoTurno: c.volteoTurno ?? null, atacoTurno: c.atacoTurno ?? null,
     puestaTurno: c.puestaTurno ?? null,
+    /* La cuenta que la carta lleva encima (CARD_HINT): turnos de
+       Wave-Motion Cannon, Final Countdown, Espadas de Luz Reveladora…
+       Es pública —se pinta en la mesa— y sin ella la IA cobraba la
+       Cannon por un umbral de LP fijo, sin saber cuánto quemaba (01-11).
+       Una tapada no tiene cuenta visible. */
+    cuenta: (oculta || bocaAbajo(c.position)) ? null : (c.cuenta?.valor ?? null),
     equipadoA: oculta ? null : (c.equipadoA ?? null),
     pos:c.position, bocaAbajo:bocaAbajo(c.position),
     defensa: !!(c.position & 0x0c), mia: c.controller===yo,

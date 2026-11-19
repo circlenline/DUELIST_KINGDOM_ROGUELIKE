@@ -23,7 +23,13 @@ export function valorCarta(c){
   if(c?.muerta) return 0.05;
   if(!c?.nombre) return c?.tapadaDesconocida === "mt" ? 1.3
                       : c?.tapadaDesconocida === "monstruo" ? 1.25 : 1.0;
-  return conocer(c.nombre, c.datos).valor ?? 1.0;
+  const k = conocer(c.nombre, c.datos);
+  /* ══ UN ACUMULADOR VALE LO QUE LLEVA ACUMULADO (01-11) ══
+     Una Wave-Motion Cannon recién puesta no es lo mismo que una con tres
+     turnos encima (3000 de daño a un clic). La cuenta es pública. Pesa
+     igual para proteger la mía que para elegir a qué le tiro la MST. */
+  if(k.acumula && Number.isFinite(c.cuenta)) return 1.2 + 0.5 * Math.max(0, c.cuenta);
+  return k.valor ?? 1.0;
 }
 export function rolDe(c){
   if(!c?.nombre) return "desconocido";

@@ -201,9 +201,30 @@ export function quitarJinzoLeAyuda(v, carta){
   return suyas > mias ? 1.2 + 0.4 * (suyas - mias) : 0;
 }
 
+/* ══ LA QUEMA TAMBIÉN ES UN RELOJ (14-11) ══
+   Pendiente del incremento 21: contra Burn el reloj solo contaba sus
+   monstruos, así que una Wave-Motion Cannon con tres turnos encima no
+   apuraba a nadie. Lo que se ve boca arriba y quema cada turno: la Cannon
+   (1000 más por turno, y lo cargado se cobra cuando quiera), Minor Goblin
+   Official (500 en mi Standby) y una Lava Golem que me hayan regalado. */
+export function quemaQueMeHacen(v){
+  let porTurno = 0, cargada = 0;
+  for(const c of v.backrowRival ?? []){
+    if(c.bocaAbajo) continue;
+    const n = canon(c.nombre ?? "");
+    if(n === "Wave-Motion Cannon"){ porTurno += 1000; cargada += 1000 * (Number(c.cuenta) || 0); }
+    else if(n === "Minor Goblin Official") porTurno += 500;
+  }
+  for(const c of v.monstruos ?? []) if(!c.bocaAbajo && canon(c.nombre ?? "") === "Lava Golem") porTurno += 1000;
+  return { porTurno, cargada };
+}
+
 export function leerPosicion(v, PLAN){
   const dPT = dañoPorTurno(v), dQH = dañoQueHago(v);
-  const relojMio  = turnosPara(v.lp.mio, dPT);
+  const quema = quemaQueMeHacen(v);
+  const relojMio  = (quema.porTurno || quema.cargada)
+    ? (quema.cargada >= v.lp.mio ? 1 : turnosPara(v.lp.mio - quema.cargada, dPT + quema.porTurno))
+    : turnosPara(v.lp.mio, dPT);
   const relojSuyo = turnosPara(v.lp.rival, dQH);
   const dif = ventaja(v);
   const caraArriba = v.monstruosRival.filter(c => !c.bocaAbajo);
@@ -219,7 +240,7 @@ export function leerPosicion(v, PLAN){
   let postura, razon;
   if(!cuerposSuyos && dQH >= v.lp.rival){ postura = "rematar"; razon = `le quito ${dQH} y tiene ${v.lp.rival}`; }
   else if(relojSuyo <= 1){ postura = "rematar"; razon = "muere este turno"; }
-  else if(relojMio <= 1){ postura = "estabilizar"; razon = `me mata este turno (${dPT} por turno, tengo ${v.lp.mio})`; }
+  else if(relojMio <= 1){ postura = "estabilizar"; razon = `me mata este turno (${dPT + quema.porTurno} por turno${quema.cargada ? ` y ${quema.cargada} de quema cargada` : ""}, tengo ${v.lp.mio})`; }
   else if(relojMio <= 2 || dif <= -2){ postura = "estabilizar"; razon = relojMio <= 2 ? `aguanto ${relojMio} turnos` : `voy ${-dif} cartas por detrás`; }
   else if(dif >= 1 && dQH > dPT){ postura = "presionar"; razon = `voy ${dif} cartas por delante y pego más`; }
   else if(!piezas.length && v.mano.length >= 2){ postura = "buscar"; razon = `sin piezas de ${PLAN.nombre}`; }
@@ -231,10 +252,10 @@ export function leerPosicion(v, PLAN){
   const apuro = emergencia ? 1 : relojMio <= 2 ? 0.7 : dif < 0 ? 0.45 : v.turno >= 12 ? 0.35 : 0.15;
 
   return {
-    dañoPorTurno: dPT, dañoQueHago: dQH, relojMio, relojSuyo, ventaja: dif,
+    dañoPorTurno: dPT, dañoQueHago: dQH, relojMio, relojSuyo, ventaja: dif, quema,
     amenaza, cuerposSuyos, piezas, postura, razon, emergencia, apuro,
     manoRival: v.manoRival.cuantas, tapadasRival: v.tapadasRival,
-    texto: `reloj ${relojMio}/${relojSuyo} · cartas ${dif >= 0 ? "+" : ""}${dif} · ` +
+    texto: `reloj ${relojMio}/${relojSuyo}${quema.porTurno || quema.cargada ? ` (quema ${quema.cargada} cargada + ${quema.porTurno}/turno)` : ""} · cartas ${dif >= 0 ? "+" : ""}${dif} · ` +
            `amenaza ${amenaza ? `${amenaza.nombre} (${poder(amenaza)})` : "ninguna"} · ${postura} (${razon})`,
   };
 }
@@ -255,6 +276,11 @@ export function decidirReserva(carta, pos, contexto = {}){
   /* Contra cartas BOCA ABAJO no se puede tasar el golpe: ahí manda la
      regla concreta de la carta (Nobleman of Crossout existe para eso). */
   if(objetivo?.bocaAbajo) return { guardar:false };
+  /* Una LLAVE del tablero (TER, Relinquished, Jinzo…) no se mide por su
+     ATK: un Relinquished de 0 no llega a ningún umbral y es lo primero
+     que hay que quitar (E, 19-11). */
+  if(objetivo && infoDe(objetivo).prioritario && ((Number(objetivo.datos?.type) || 0) & 0x1))
+    return { guardar:false, motivo:"es una llave del tablero" };
   /* Lo que flota si muere en combate no se mata atacando: ahí la remoción
      por efecto es la manera, mida lo que mida (ver `flotaEnCombate`). */
   if(regla.umbralAtk != null && contexto.flotaEnCombate) return { guardar:false };

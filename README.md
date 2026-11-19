@@ -9,11 +9,46 @@
 A Yu-Gi-Oh! **GOAT Format** (April 2005) simulator that runs in a web browser, on PC
 and on phones. It plays against you with a bot built to play like a GOAT player, and
 it has a Duelist Kingdom roguelike, a Swiss tournament with top cut, and rooms to play
-against your friends. Free, no install, no account. **Build 1.2.**
+against your friends. Free, no install, no account. **Build 1.3.**
 
 [![Watch the trailer](docs/img/trailer-readme.jpg)](https://circlenline.github.io/DUELIST_KINGDOM_ROGUELIKE/#trailer)
 
 ---
+
+## Build 1.3 — a smarter AI, a draft mode and more decks
+
+- **The AI studied 122 tournament replays.** It was put in every position of real Dueling Book
+  games from top players and compared with what they did. From that it now draws and searches
+  before committing, clears the board before summoning, plans the whole Battle Phase instead of
+  one attack at a time, bluffs with a set spell, sets its backrow gradually instead of all at
+  once, and saves Snatch Steal and Tribe-Infecting Virus for the turns that decide the game.
+- **It thinks about consequences, not only ATK.** It reads what happens when a monster dies
+  (floaters, Sangan, Relinquished's equip shield), how exposed its attacker is left after the
+  battle, and adds burn damage up over the turns.
+- **Thousand-Eyes Restrict and Relinquished** are now the first thing it removes with Book of
+  Moon, Tsukuyomi, Chaos Sorcerer, Ring and the rest, instead of hitting another monster because
+  they "only" have 0 ATK. With its own TER it knows to Book of Moon it to attack with the rest,
+  then flip it back in Main Phase 2.
+- **Scapegoat** waits for a direct attack or for the card that would destroy it, and is only
+  chained in your End Phase when it needs the tokens on its turn.
+- **Tsukuyomi and Book of Moon** are used for value: Tsukuyomi on your Kycoo and then it attacks
+  (no Nobleman wasted), never Tsukuyomi on itself, and Tsukuyomi, Asura Priest or a floater +
+  Creature Swap to steal your monster for free.
+- **Floaters:** it crashes its own Giant Rat or Pyramid Turtle when what comes out of the deck
+  solves the board, and only kills your Pyramid Turtle if it has a set card ready for what
+  comes out.
+- **New response mode: "When it makes sense".** You're only asked when one of your cards can
+  actually do something: Waboku or Mirror Force when an attack is declared, Trap Hole after a
+  summon, everything else when your opponent does something or in their End Phase, and always if
+  one of your cards is about to be destroyed. "Automatic", "Always ask" and "Never" are still
+  there (Options, or the chain button during a duel).
+- **4 new meta decks:** Earth Aggro, Warrior Aggro, Umi (Water Aggro with A Legendary Ocean) and
+  Relinquished Control. The Swiss tournament has much more variety now (fewer Goat Control and
+  Chaos mirrors, more aggro), with the matchup table measured again over 27,600 games.
+- **Avatars in the tournament:** pick yours when you register; every bot has its own face.
+- **Draft · Retro Pack 2:** 18 seats (you and 17 bots), six packs of 9, pick and pass, build your
+  deck and play a Swiss event with a round timer. The bots draft with their own styles and play
+  their decks with a plan.
 
 ## Build 1.2 — fixes from your GitHub issues
 
@@ -75,7 +110,7 @@ you can train for locals or tournament brackets without the manual interaction o
 Dueling Book.
 
 The main upgrade from the last version, besides the new game modes, is a **much
-smarter AI**, with a bank of **over 100 meta plays** that guides its decisions so it
+smarter AI**, with a bank of **almost 400 positions taken from real misplays** that guides its decisions so it
 plays like a real player as well as it can. I'm happy with its level for this
 release, but the goal is to keep improving it, so any feedback or misplay report you
 send through this GitHub page is very much appreciated and will be used to improve the
@@ -87,8 +122,9 @@ simulator.
   download it and play locally on your device.
 - **PvE modes**
   - **Duelist Kingdom** — a roguelike run across the island, up to Pegasus.
-  - **Free Duel (Bo1)** — 20 premade meta decks ready to play, or your own.
+  - **Free Duel (Bo1)** — 24 premade meta decks ready to play, or your own.
   - **Swiss Tournament (Bo3)** — Swiss rounds and a top cut, with side decking.
+  - **Draft · Retro Pack 2** — an 18-player booster draft against bots.
 - **PvP mode**
   - **Play with a friend** — custom decks, Bo1 or Bo3, with side decking.
 - **Deck builder** with the 1,685 cards legal in the format and the real GOAT banlist.
@@ -119,8 +155,9 @@ Beat him and that duelist unlocks a **Mastery**, a permanent advantage for later
 
 ### Free Duel
 
-Any of the 20 meta decks (Goat Control, Chaos Turbo, Warrior, Chaos Control, Zombie,
-Burn, Horus, Phoenix, Monarch, Gravekeeper, Empty Jar, Library FTK…) or one you built,
+Any of the 24 meta decks (Goat Control, Chaos Turbo, Warrior, Chaos Control, Zombie,
+Earth Aggro, Warrior Aggro, Umi, Relinquished, Burn, Horus, Phoenix, Monarch, Gravekeeper,
+Empty Jar, Library FTK…) or one you built,
 against any of them, at four difficulties. There's also a challenge board: every deck
 against every difficulty, with a medal for each one you beat.
 
@@ -133,9 +170,16 @@ elimination**. You register your deck and your side deck, and you side between g
 like at a real event. The other 31 players are bots with meta decks, weighted by how
 much each deck is played in real tournament replays, so the top 16 looks like a real
 GOAT top cut. Your table is a real Bo3; the other tables are resolved with a matchup
-table measured over 19,000 bot-vs-bot games.
+table measured over 27,600 bot-vs-bot games.
 
 ![Swiss tournament](docs/img/torneo.jpg)
+
+### Draft · Retro Pack 2
+
+A booster draft like the ones at your local store: 18 seats (you and 17 bots), six packs of
+Retro Pack 2 with nine cards each, pick one and pass. Then you build your deck from your picks
+and play a Swiss event in best of three, with a round timer. The bots draft with their own
+styles, read what's being passed, and play the deck they built with its own plan.
 
 ### Play with a friend
 
@@ -165,13 +209,13 @@ How it works, in short:
 
 - **It sees only what a player would see.** A boundary module trims what the bot is
   allowed to know: it literally cannot see your face-down cards or your hand.
-- **A plan per deck** for the 20 meta decks: what each one wins with, how much to risk,
+- **A plan per deck** for the 24 meta decks: what each one wins with, how much to risk,
   which cards are the heavy hitters.
 - **It simulates its options** before picking a play, instead of only following rules
   of thumb.
 - **2005 priority.** It knows when to hold priority with Black Luster Soldier, Chaos
   Sorcerer, Tribe-Infecting Virus or Breaker, and it punishes you when you pass it.
-- **Tuned against real games.** It learned from 101 tournament replays from Dueling
+- **Tuned against real games.** It learned from 122 tournament replays from Dueling
   Book, and it's tested against a bench of fixed positions with the known-correct play,
   each one taken from a real misplay. Every misplay you report can become one more.
 

@@ -407,9 +407,25 @@ pos("tempo", "Scapegoat no se quema en la Main Phase 1 del rival",
   return { d, q: preguntaCadena([d.zones[0][L.SZONE][0]]), bien: r => r?.index == null };
 });
 
-pos("tempo", "Scapegoat sí en la End Phase del rival",
-    "control", () => {
-  const d = mesa({ mios:{ mt:["Scapegoat"] }, turnPlayer:1, fase:0x200 });
+pos("tempo", "Scapegoat sí en la End Phase del rival si en mi turno uso las fichas",
+    "control (19-11: con Metamorphosis en la mano, las fichas tienen trabajo)", () => {
+  const d = mesa({ mios:{ mt:["Scapegoat"], mano:["Metamorphosis"] }, turnPlayer:1, fase:0x200 });
+  return { d, q: preguntaCadena([d.zones[0][L.SZONE][0]]), bien: r => r?.index === 0 };
+});
+pos("tempo", "…pero sin uso para las fichas, Scapegoat espera al ataque directo",
+    "E, 19-11: «no espera a que haga un ataque directo o a que destruya la carta»", () => {
+  const d = mesa({ mios:{ mt:["Scapegoat"], mano:["Sangan (GOAT)"] }, suyos:{ campo:["Breaker the Magical Warrior"] }, turnPlayer:1, fase:0x200, turno:4 });
+  return { d, q: preguntaCadena([d.zones[0][L.SZONE][0]]), bien: r => r?.index == null };
+});
+pos("tempo", "…y con un monstruo colocado no se atasca la mesa con cuatro fichas",
+    "E, 19-11: «atasca la mesa… si solo tiene 4 tokens y 1 monstruo set»", () => {
+  const d = mesa({ mios:{ mt:["Scapegoat"], campo:[{ carta:"Sangan (GOAT)", pos:P.TAPADA|P.DEF }], mano:["Breaker the Magical Warrior"] },
+                   suyos:{ campo:["Blade Knight"] }, turnPlayer:1, fase:0x200, turno:4 });
+  return { d, q: preguntaCadena([d.zones[0][L.SZONE][0]]), bien: r => r?.index == null };
+});
+pos("tempo", "…y con un monarca en la mano y sin tributos, sí en la End Phase",
+    "control: la End Phase esquiva el «no puedes invocar este turno»", () => {
+  const d = mesa({ mios:{ mt:["Scapegoat"], mano:["Zaborg the Thunder Monarch"] }, suyos:{ campo:["Blade Knight"] }, turnPlayer:1, fase:0x200, turno:4 });
   return { d, q: preguntaCadena([d.zones[0][L.SZONE][0]]), bien: r => r?.index === 0 };
 });
 
@@ -1027,7 +1043,9 @@ pos("rematar", "pero Just Desserts que MATA se activa",
 /* ── D · UNA MÁGICA NORMAL NO SE COLOCA SI SE PUEDE JUGAR ── */
 pos("no malgastar", "Reinforcement of the Army se juega, no se coloca",
     "log 21-12-59, turno 1", () => {
-  const d = mesa({ mios:{ mano:["Reinforcement of the Army (GOAT)"] } });
+  /* Con un monstruo que invocar: sin invocación disponible, guardarlo es
+     lo que hacen los pros (examen 14-11, `buscadorGuarda`). */
+  const d = mesa({ mios:{ mano:["Reinforcement of the Army (GOAT)", "Blade Knight"] } });
   /* OJO: un buscador con el mazo VACÍO no consigue nada, y la IA hace
      bien en no jugarlo. `mesa` no monta el mazo, así que hay que llenarlo
      a mano o el test mide lo contrario de lo que cree medir. */
@@ -1035,8 +1053,8 @@ pos("no malgastar", "Reinforcement of the Army se juega, no se coloca",
                             location:L.DECK, sequence:0, position:P.TAPADA });
   d.zones[0][L.DECK].push({ code:cod("Battle Ox"), uid:901, controller:0,
                             location:L.DECK, sequence:1, position:P.TAPADA });
-  const c = d.zones[0][L.HAND][0];
-  return { d, q: preguntaIdle({ activa:[c], colocaMT:[c] }),
+  const c = d.zones[0][L.HAND][0], spy = d.zones[0][L.HAND][1];
+  return { d, q: preguntaIdle({ activa:[c], colocaMT:[c], coloca:[spy], invoca:[spy] }),
            bien: r => r?.action === IA.SELECT_ACTIVATE,
            regular: r => r?.action !== IA.SELECT_SPELL_SET };
 });
@@ -2812,6 +2830,565 @@ pos("github 18-10", "si el que ataca es mi monstruo robado, Book of Moon no tumb
   lady.atacoTurno = 3; zaloog.atacoTurno = 3;
   d.atacante = { uid:zaloog.uid, code:zaloog.code, controller:1 };
   return { d, q: preguntaCadena([d.zones[0][L.SZONE][0]]), bien: r => r?.index == null };
+});
+/* ══ ESTRATEGIA 01-11 · el documento de E sobre decisiones estratégicas ══
+   Cada posición sale de un caso del documento («Goat Format Simulator —
+   Strategic AI Decision-Making Improvements») y las que no son control
+   fallan con la versión del 18-10. */
+const relinquished = ({ lp = [8000, 8000], equipo = true } = {}) => {
+  const d = mesa({ mios:{ campo:["Luster Dragon"] },
+                   suyos:{ campo:[{ carta:"Relinquished", atkReal:0, defReal:0 }],
+                           mt: equipo ? [{ carta:"Magician of Faith", pos:P.ATK }] : [] }, lp, turno:7 });
+  const r = d.zones[1][L.MZONE][0];
+  if(equipo){ const e = d.zones[1][L.SZONE][0]; e.equipadoA = r.uid; r.equipado = true; e.owner = 0; }
+  return d;
+};
+pos("estrategia 01-11", "Relinquished 0/0 con un monstruo absorbido: no se ataca (se rompe el equipo, él se queda y absorbe otro)",
+    "E, §3 caso A: «La IA parece centrarse en el ATK actual y no en el resultado completo»", () => {
+  const d = relinquished();
+  return { d, q: preguntaBatalla([d.zones[0][L.MZONE][0]]), bien: r => r?.action !== BA.SELECT_BATTLE };
+});
+pos("estrategia 01-11", "…sin equipo, el mismo Relinquished de 0 muere: se ataca",
+    "control", () => {
+  const d = relinquished({ equipo:false });
+  return { d, q: preguntaBatalla([d.zones[0][L.MZONE][0]]), bien: r => r?.action === BA.SELECT_BATTLE };
+});
+pos("estrategia 01-11", "…y con equipo, si el daño le remata, se ataca igual",
+    "control: «puede ser correcto si el daño permite cerrar la partida»", () => {
+  const d = relinquished({ lp:[8000, 1800] });
+  return { d, q: preguntaBatalla([d.zones[0][L.MZONE][0]]), bien: r => r?.action === BA.SELECT_BATTLE };
+});
+pos("estrategia 01-11", "dos Gravekeeper's Spy agachadas delante de Sangan y un 1900: no se levantan",
+    "E, §5: «Los Spies pierden la protección de sus 2000 DEF… el rival obtiene el efecto de Sangan»", () => {
+  const d = mesa({ mios:{ campo:[{carta:"Gravekeeper's Spy", pos:P.DEF},{carta:"Gravekeeper's Spy", pos:P.DEF}] },
+                   suyos:{ campo:["Sangan","Luster Dragon"] }, turno:6 });
+  return { d, q: preguntaIdle({ giros:d.zones[0][L.MZONE].filter(Boolean), bp:true }),
+           bien: r => r?.action !== IA.SELECT_POS_CHANGE };
+});
+pos("estrategia 01-11", "…con el Sangan solo enfrente, sí se levanta a matarlo",
+    "control: «cuándo adoptar una posición agresiva es mejor que mantener una defensa estable»", () => {
+  const d = mesa({ mios:{ campo:[{carta:"Gravekeeper's Spy", pos:P.DEF}] }, suyos:{ campo:["Sangan"] }, turno:6 });
+  return { d, q: preguntaIdle({ giros:[d.zones[0][L.MZONE][0]], bp:true }), bien: r => r?.action === IA.SELECT_POS_CHANGE };
+});
+pos("estrategia 01-11", "una Spy ya de frente no ataca al Sangan si luego no podría agacharse ante el 1900",
+    "E, §5: «comparar el estado actual con el estado previsto al finalizar el turno»", () => {
+  const d = mesa({ mios:{ campo:["Gravekeeper's Spy"] }, suyos:{ campo:["Sangan","Luster Dragon"] }, turno:6 });
+  return { d, q: preguntaBatalla([d.zones[0][L.MZONE][0]]), bien: r => r?.action !== BA.SELECT_BATTLE };
+});
+pos("estrategia 01-11", "…pero si entró este turno (no puede agacharse de todas formas), atacar no le cuesta nada",
+    "control", () => {
+  const d = mesa({ mios:{ campo:["Gravekeeper's Spy"] }, suyos:{ campo:["Sangan","Luster Dragon"] }, turno:6 });
+  d.zones[0][L.MZONE][0].entroTurno = 6;
+  return { d, q: preguntaBatalla([d.zones[0][L.MZONE][0]]), bien: r => r?.action === BA.SELECT_BATTLE };
+});
+const cannon = (cuenta, lpRival, mano = []) => {
+  const d = mesa({ mios:{ mt:[{ carta:"Wave-Motion Cannon", pos:P.ATK }], mano },
+                   suyos:{ campo:["Luster Dragon"] }, lp:[8000, lpRival], turno:9 });
+  d.zones[0][L.SZONE][0].cuenta = { clase:"turnos", valor:cuenta };
+  return d;
+};
+pos("estrategia 01-11", "Wave-Motion Cannon de 1000 con el rival a 2800 y sin cartas para quitarla: se espera",
+    "E, §10.2: «Activarla demasiado pronto para obtener una cantidad insignificante de daño»", () => {
+  const d = cannon(1, 2800);
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.SZONE][0]], bp:false }), bien: r => r?.action !== IA.SELECT_ACTIVATE };
+});
+pos("estrategia 01-11", "Wave-Motion Cannon de 4000 con el rival a 3500: se cobra (es letal)",
+    "E, §10.2: «Si Cannon puede causar 3000 y el rival tiene 2800 LP, utilizarla es mejor que esperar»", () => {
+  const d = cannon(4, 3500);
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.SZONE][0]], bp:false }), bien: r => r?.action === IA.SELECT_ACTIVATE };
+});
+pos("estrategia 01-11", "Wave-Motion Cannon de 3000 sin letal, pero el rival con cinco cartas en la mano y dos tapadas: se cobra",
+    "E, §10.2: «esperar demasiados turnos buscando el máximo valor y perderla frente a removal»", () => {
+  const d = cannon(3, 7000);
+  d.zones[1][L.HAND].push(...[1,2,3,4,5].map(() => ({ uid:9000+Math.random(), code:cod("Mystical Elf"), controller:1, owner:1, location:L.HAND })));
+  for(const k of [0,1]){ const c = { uid:9100+k, code:cod("Mirror Force"), controller:1, owner:1, location:L.SZONE, sequence:k, position:P.TAPADA }; d.zones[1][L.SZONE][k] = c; d.cards.set(c.uid, c); }
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.SZONE][0]], bp:false }), bien: r => r?.action === IA.SELECT_ACTIVATE };
+});
+pos("estrategia 01-11", "…la misma Cannon de 3000 con el rival sin mano ni tapadas: se espera a que sume",
+    "control: «si el rival tiene 7000 LP y existe un bloqueo relativamente estable, puede merecer la pena acumular»", () => {
+  const d = cannon(3, 7000);
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.SZONE][0]], bp:false }), bien: r => r?.action !== IA.SELECT_ACTIVATE };
+});
+pos("estrategia 01-11", "Lava Golem sin nada que lo frene, contra Sangan y Mystic Tomato: no se le regala un 3000",
+    "E, §10.5: «Entregar Lava Golem a un rival sin disponer de ningún mecanismo de defensa puede ser una jugada muy negativa»", () => {
+  const d = mesa({ mios:{ mano:["Lava Golem"] }, suyos:{ campo:["Sangan","Mystic Tomato"] }, turno:6 });
+  return { d, q: preguntaIdle({ especial:[d.zones[0][L.HAND][0]], bp:false }), bien: r => r?.action !== IA.SELECT_SPECIAL_SUMMON };
+});
+pos("estrategia 01-11", "…con Gravity Bind boca arriba y Jinzo + Airknight enfrente, sí",
+    "control: «hacerlo mientras Gravity Bind bloquea sus ataques puede proporcionar una ventaja importante»", () => {
+  const d = mesa({ mios:{ mano:["Lava Golem"], mt:[{ carta:"Gravity Bind", pos:P.ATK }] },
+                   suyos:{ campo:["Jinzo","Airknight Parshath"] }, turno:6 });
+  return { d, q: preguntaIdle({ especial:[d.zones[0][L.HAND][0]], bp:false }), bien: r => r?.action === IA.SELECT_SPECIAL_SUMMON };
+});
+pos("estrategia 01-11", "Stealth Bird tapado detrás de Gravity Bind: se voltea (1000 de daño)",
+    "E, §10.3: «No debe tratarlo simplemente como un monstruo de estadísticas débiles»", () => {
+  const d = mesa({ mios:{ campo:[{ carta:"Stealth Bird", pos:P.TAPADA }], mt:[{ carta:"Gravity Bind", pos:P.ATK }] },
+                   suyos:{ campo:["Luster Dragon"] }, turno:6 });
+  return { d, q: preguntaIdle({ giros:[d.zones[0][L.MZONE][0]], bp:false }), bien: r => r?.action === IA.SELECT_POS_CHANGE };
+});
+pos("estrategia 01-11", "Ojama Trio colocada, en una ventana cualquiera del rival: no se activa",
+    "E, §10.4: «No debe utilizar Ojama Trio automáticamente solo porque pueda hacerlo»", () => {
+  const d = mesa({ mios:{ mt:["Ojama Trio"] }, suyos:{ campo:["Luster Dragon"] }, turnPlayer:1, turno:6 });
+  return { d, q: preguntaCadena([d.zones[0][L.SZONE][0]]), bien: r => r?.index == null };
+});
+pos("estrategia 01-11", "Ojama Trio + Just Desserts con letal: Just Desserts va primero (debajo en la cadena)",
+    "E, §10.4: «orden correcto de activación y resolución»", () => {
+  const d = mesa({ mios:{ mt:["Ojama Trio","Just Desserts"] }, suyos:{ campo:["Luster Dragon"] }, lp:[8000, 2000], turnPlayer:1, turno:6 });
+  return { d, q: preguntaCadena([d.zones[0][L.SZONE][0], d.zones[0][L.SZONE][1]]), bien: r => r?.index === 1 };
+});
+pos("estrategia 01-11", "…y con Just Desserts ya en la cadena, Ojama Trio encima (resuelve antes y Desserts cuenta cuatro)",
+    "E, §10.4", () => {
+  const d = mesa({ mios:{ mt:["Ojama Trio", { carta:"Just Desserts", pos:P.ATK }] }, suyos:{ campo:["Luster Dragon"] }, lp:[8000, 2000], turnPlayer:1, turno:6 });
+  d.cadena = [{ code:cod("Just Desserts"), controller:0 }];
+  return { d, q: preguntaCadena([d.zones[0][L.SZONE][0]]), bien: r => r?.index === 0 };
+});
+pos("estrategia 01-11", "MST: la Wave-Motion Cannon del rival con 3 turnos antes que una tapada",
+    "E, §11: «Eliminar fuentes de daño recurrente»", () => {
+  const d = mesa({ mios:{ mano:["Mystical Space Typhoon"] },
+                   suyos:{ mt:[{ carta:"Wave-Motion Cannon", pos:P.ATK }, "Mirror Force"] }, turno:9 });
+  d.zones[1][L.SZONE][0].cuenta = { clase:"turnos", valor:3 };
+  d.cadena = [{ code:cod("Mystical Space Typhoon"), controller:0 }];
+  return { d, q: preguntaObjetivo(d.zones[1][L.SZONE].filter(Boolean)), bien: r => r?.indicies?.[0] === 0 };
+});
+/* ══════════════ PROS 14-11: lo que salió del examen contra los replays ══════════════
+   `examen-replays.mjs` pone a la IA en las mismas posiciones que 323 duelos
+   de top cut (mundial y nationals). Cada regla de abajo sale de una
+   diferencia que se repetía; cada una lleva su contraejemplo. */
+const mazoGuerreros = d => { ["Exiled Force","D.D. Warrior Lady","Blade Knight","Sangan (GOAT)","Pot of Greed","Mirror Force",
+  "Exiled Force","Blade Knight","Gravekeeper's Spy (GOAT)","Book of Moon","Nobleman of Crossout (GOAT)","Heavy Storm"].forEach((n,k) =>
+  d.zones[0][L.DECK].push({ code:cod(n), uid:950+k, controller:0, location:L.DECK, sequence:k, position:P.TAPADA })); };
+pos("pros 14-11", "Graceful Charity antes de invocar (robar antes de comprometerse)",
+    "examen 14-11: Graceful, 73 de 238 posiciones invocando o colocando antes", () => {
+  const d = mesa({ mios:{ mano:["Graceful Charity","Breaker the Magical Warrior","Sangan (GOAT)","Thunder Dragon (GOAT)"] },
+                   suyos:{ campo:[{carta:"Gravekeeper's Spy (GOAT)", pos:P.TAPADA|P.DEF}] }, turno:5 });
+  mazoGuerreros(d);
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ activa:[h[0]], colocaMT:[h[0]], invoca:[h[1],h[2]], coloca:[h[1],h[2]] }),
+           bien: r => r?.action === IA.SELECT_ACTIVATE && r.index === 0 };
+});
+pos("pros 14-11", "…pero sin carta que robe, se invoca como siempre",
+    "contraejemplo", () => {
+  const d = mesa({ mios:{ mano:["Breaker the Magical Warrior","Sangan (GOAT)"] },
+                   suyos:{ campo:[{carta:"Gravekeeper's Spy (GOAT)", pos:P.TAPADA|P.DEF}] }, turno:5 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ invoca:[h[0],h[1]], coloca:[h[0],h[1]] }),
+           bien: r => r?.action === IA.SELECT_SUMMON || r?.action === IA.SELECT_MONSTER_SET };
+});
+pos("pros 14-11", "Reinforcement of the Army se guarda con la invocación ya gastada",
+    "examen 14-11: sin invocación, la IA lo activaba en el 79 % de las posiciones y los pros en el 18 %", () => {
+  const d = mesa({ mios:{ mano:["Reinforcement of the Army (GOAT)","Sakuretsu Armor"],
+                          campo:[{carta:"Breaker the Magical Warrior", pos:P.ATK}] }, turno:5 });
+  mazoGuerreros(d);
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ activa:[h[0]], colocaMT:[h[0],h[1]] }),
+           bien: r => !(r?.action === IA.SELECT_ACTIVATE && r.index === 0) };
+});
+pos("pros 14-11", "…y con la invocación libre, se busca primero el guerrero",
+    "contraejemplo", () => {
+  const d = mesa({ mios:{ mano:["Reinforcement of the Army (GOAT)","Sakuretsu Armor","Sangan (GOAT)"] }, turno:5,
+                   suyos:{ campo:[{carta:"Gravekeeper's Spy (GOAT)", pos:P.TAPADA|P.DEF}] } });
+  mazoGuerreros(d);
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ activa:[h[0]], colocaMT:[h[0],h[1]], invoca:[h[2]], coloca:[h[2]] }),
+           bien: r => r?.action === IA.SELECT_ACTIVATE && r.index === 0 };
+});
+pos("pros 14-11", "batalla entera: el 1400 a la Spy que se ve, el 2400 a la tapada",
+    "examen 14-11: «mismo objetivo, otro atacante»", () => {
+  const d = mesa({ mios:{ campo:[{carta:"Ryu Kokki", pos:P.ATK},{carta:"Giant Rat", pos:P.ATK}] },
+                   suyos:{ campo:[{carta:"Gravekeeper's Spy (GOAT)", pos:P.ATK},{carta:"Sangan (GOAT)", pos:P.TAPADA|P.DEF}] },
+                   turno:7, fase:0x8 });
+  const m = d.zones[0][L.MZONE];
+  return { d, q: preguntaBatalla([m[0], m[1]]), bien: r => r?.action === BA.SELECT_BATTLE && r.index === 1 };
+});
+pos("pros 14-11", "…y el objetivo que se fija es la Spy, no la tapada",
+    "examen 14-11", () => {
+  const d = mesa({ mios:{ campo:[{carta:"Ryu Kokki", pos:P.ATK},{carta:"Giant Rat", pos:P.ATK}] },
+                   suyos:{ campo:[{carta:"Gravekeeper's Spy (GOAT)", pos:P.ATK},{carta:"Sangan (GOAT)", pos:P.TAPADA|P.DEF}] },
+                   turno:7, fase:0x8 });
+  const m = d.zones[0][L.MZONE], s = d.zones[1][L.MZONE];
+  return { d, previo: cb => { const r = cb(preguntaBatalla([m[0], m[1]]), 0); if(r?.index !== 1) throw new Error("no atacó con la Giant Rat: la posición no mide lo que dice"); },
+           q: preguntaObjetivo([s[0], s[1]]), bien: r => (r?.indicies ?? [])[0] === 0 };
+});
+pos("pros 14-11", "…con dos objetivos boca arriba que caen, el fuerte va al grande (como siempre)",
+    "contraejemplo", () => {
+  const d = mesa({ mios:{ campo:[{carta:"Ryu Kokki", pos:P.ATK},{carta:"Kycoo the Ghost Destroyer", pos:P.ATK}] },
+                   suyos:{ campo:[{carta:"Blade Knight", pos:P.ATK},{carta:"Vampire Lord", pos:P.ATK}] },
+                   turno:7, fase:0x8 });
+  const m = d.zones[0][L.MZONE], s = d.zones[1][L.MZONE];
+  return { d, previo: cb => { cb(preguntaBatalla([m[0], m[1]]), 0); },
+           q: preguntaObjetivo([s[0], s[1]]),
+           bien: r => true, regular: r => true };
+});
+pos("pros 14-11", "Heavy Storm antes de invocar al Breaker (limpiar antes de comprometerse)",
+    "examen 14-11: Heavy Storm, 68 de 148 posiciones invocando antes", () => {
+  const d = mesa({ mios:{ mano:["Heavy Storm","Breaker the Magical Warrior","Sangan (GOAT)"] },
+                   suyos:{ mt:["Mirror Force","Torrential Tribute"], mano:["Sangan (GOAT)","Pot of Greed"] }, turno:5 });
+  mazoGuerreros(d);
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ activa:[h[0]], colocaMT:[h[0]], invoca:[h[1],h[2]], coloca:[h[1],h[2]] }),
+           bien: r => r?.action === IA.SELECT_ACTIVATE && r.index === 0 };
+});
+const LISTA_ZOMBIE = ["Pyramid Turtle","Pyramid Turtle","Ryu Kokki","Ryu Kokki","Vampire Lord","Book of Life","Book of Life",
+  "Spirit Reaper","Creature Swap","Snatch Steal","Mirror Force","Sangan"];
+pos("pros 14-11", "Ryu Kokki (carta clave del plan) ataca a una tapada que cae seguro",
+    "examen 14-11: el freno de `planBatalla` era para lo que puede matarlo", () => {
+  const d = mesa({ mios:{ campo:[{carta:"Ryu Kokki", pos:P.ATK}] }, mazoMio:LISTA_ZOMBIE,
+                   suyos:{ campo:[{carta:"Gravekeeper's Spy (GOAT)", pos:P.TAPADA|P.DEF}], mano:["Sangan (GOAT)","Pot of Greed","Heavy Storm"] },
+                   turno:3, fase:0x8 });
+  return { d, q: preguntaBatalla([d.zones[0][L.MZONE][0]]), bien: r => r?.action === BA.SELECT_BATTLE };
+});
+pos("pros 14-11", "…pero no se estrella contra un 2400 boca arriba que lo iguala",
+    "contraejemplo", () => {
+  const d = mesa({ mios:{ campo:[{carta:"Ryu Kokki", pos:P.ATK}] }, mazoMio:LISTA_ZOMBIE,
+                   suyos:{ campo:[{carta:"Mobius the Frost Monarch", pos:P.ATK}] }, turno:3, fase:0x8 });
+  return { d, q: preguntaBatalla([d.zones[0][L.MZONE][0]]), bien: r => r?.action !== BA.SELECT_BATTLE, regular: r => true };
+});
+pos("pros 14-11", "con su Wave-Motion Cannon cargada a 3000 y 3500 LP, la MST va ya",
+    "incremento 21 §5: el reloj no contaba la Cannon del rival", () => {
+  const d = mesa({ mios:{ mano:["Mystical Space Typhoon","Sangan (GOAT)"] },
+                   suyos:{ mt:[{ carta:"Wave-Motion Cannon", pos:P.ATK }], mano:["Pot of Greed","Sangan (GOAT)"] }, lp:[3500, 8000], turno:9 });
+  d.zones[1][L.SZONE][0].cuenta = { clase:"turnos", valor:3 };
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ activa:[h[0]], colocaMT:[h[0]], invoca:[h[1]], coloca:[h[1]] }),
+           bien: r => r?.action === IA.SELECT_ACTIVATE && r.index === 0 };
+});
+pos("pros 14-11", "Exiled Force se invoca, no se coloca (su efecto es boca arriba)",
+    "examen 14-11: los pros la invocan en 89 de 94 casos", () => {
+  const d = mesa({ mios:{ mano:["Exiled Force","Don Zaloog","Dust Tornado"] },
+                   suyos:{ campo:[{carta:"Tribe-Infecting Virus", pos:P.ATK}], mt:["Solemn Judgment"], mano:["Sangan (GOAT)"] }, lp:[5400,3850], turno:10 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ invoca:[h[0],h[1]], coloca:[h[0],h[1]], colocaMT:[h[2]] }),
+           bien: r => !(r?.action === IA.SELECT_MONSTER_SET && r.index === 0) };
+});
+/* E, 14-11, sobre el examen: «a veces colocan mágicas o trampas de farol, y
+   a veces acaban el turno con trampas en la mano, todo para protegerse del
+   removal del rival… jugar el backrow y los recursos progresivamente…
+   esas invocaciones muchas veces se harán por tempo». */
+pos("pros 14-11", "de farol: con el backrow vacío, el Nobleman sin objetivo va boca abajo",
+    "E, 14-11: «a veces colocan mágicas de farol»", () => {
+  const d = mesa({ mios:{ mano:["Nobleman of Crossout (GOAT)","Pot of Greed"], campo:[{carta:"Breaker the Magical Warrior", pos:P.ATK}] },
+                   suyos:{ campo:[{carta:"Sangan (GOAT)", pos:P.ATK}], mano:["Sangan (GOAT)","Pot of Greed","Heavy Storm"] }, turno:5 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ colocaMT:[h[0]], bp:false }), bien: r => r?.action === IA.SELECT_SPELL_SET };
+});
+pos("pros 14-11", "…pero con algo ya puesto no hay farol que valga",
+    "contraejemplo", () => {
+  const d = mesa({ mios:{ mano:["Nobleman of Crossout (GOAT)"], campo:[{carta:"Breaker the Magical Warrior", pos:P.ATK}], mt:["Sakuretsu Armor"] },
+                   suyos:{ campo:[{carta:"Sangan (GOAT)", pos:P.ATK}], mano:["Sangan (GOAT)","Pot of Greed","Heavy Storm"] }, turno:5 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ colocaMT:[h[0]], bp:false }), bien: r => r?.action !== IA.SELECT_SPELL_SET };
+});
+pos("pros 14-11", "poco a poco: con una trampa puesta y su mano llena, la segunda se guarda",
+    "E, 14-11: «sin comprometer hasta que el riesgo es menor»", () => {
+  const d = mesa({ mios:{ mano:["Mirror Force"], mt:["Sakuretsu Armor"], campo:[{carta:"Gravekeeper's Spy (GOAT)", pos:P.TAPADA|P.DEF}] },
+                   suyos:{ mano:["Sangan (GOAT)","Pot of Greed","Heavy Storm","Snatch Steal","Mystical Space Typhoon"] }, turno:4 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ colocaMT:[h[0]], bp:false }), bien: r => r?.action !== IA.SELECT_SPELL_SET };
+});
+pos("pros 14-11", "…y con el rival sin mano, se baja",
+    "contraejemplo", () => {
+  const d = mesa({ mios:{ mano:["Mirror Force"], mt:["Sakuretsu Armor"], campo:[{carta:"Gravekeeper's Spy (GOAT)", pos:P.TAPADA|P.DEF}] },
+                   suyos:{ mano:["Sangan (GOAT)"] }, turno:4 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ colocaMT:[h[0]], bp:false }), bien: r => r?.action === IA.SELECT_SPELL_SET };
+});
+pos("pros 14-11", "por tempo: D.D. Warrior Lady de frente delante de un Chaos Sorcerer",
+    "E, 14-11: «muchas veces se harán por tempo»", () => {
+  const d = mesa({ mios:{ mano:["D.D. Warrior Lady"] },
+                   suyos:{ campo:[{carta:"Chaos Sorcerer", pos:P.ATK}], mano:["Sangan (GOAT)","Pot of Greed"] }, turno:6 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ invoca:[h[0]], coloca:[h[0]] }), bien: r => r?.action === IA.SELECT_SUMMON };
+});
+/* E, 14-11: «Snatch Steal y Tribe son cartas super importantes que cambian
+   la partida, han de guardarse para esos momentos». */
+pos("pros 14-11", "Snatch Steal no se gasta en un Gravekeeper's Spy en defensa",
+    "examen 14-11: 53 Snatch Steal de la IA contra una Spy agachada", () => {
+  const d = mesa({ mios:{ mano:["Snatch Steal","Sangan (GOAT)"] },
+                   suyos:{ campo:[{carta:"Gravekeeper's Spy (GOAT)", pos:P.DEF}], mano:["Pot of Greed","Sangan (GOAT)"] }, turno:6 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ activa:[h[0]], invoca:[h[1]], coloca:[h[1]] }),
+           bien: r => !(r?.action === IA.SELECT_ACTIVATE && r.index === 0) };
+});
+pos("pros 14-11", "…y sí en su Black Luster Soldier",
+    "contraejemplo", () => {
+  const d = mesa({ mios:{ mano:["Snatch Steal","Sangan (GOAT)"] },
+                   suyos:{ campo:[{carta:"Black Luster Soldier - Envoy of the Beginning", pos:P.ATK}], mano:["Pot of Greed","Sangan (GOAT)"] }, turno:6 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ activa:[h[0]], invoca:[h[1]], coloca:[h[1]] }),
+           bien: r => r?.action === IA.SELECT_ACTIVATE && r.index === 0 };
+});
+pos("pros 14-11", "Tribe-Infecting Virus no sale de cuerpo sin nada boca arriba que destruir",
+    "examen 14-11: 252 Virus invocados así donde los pros no", () => {
+  const d = mesa({ mios:{ mano:["Tribe-Infecting Virus","Sangan (GOAT)","Gravekeeper's Spy (GOAT)"] },
+                   suyos:{ campo:[{carta:"Sangan (GOAT)", pos:P.TAPADA|P.DEF}], mano:["Pot of Greed","Sangan (GOAT)"] }, turno:5 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ invoca:[h[0],h[1],h[2]], coloca:[h[0],h[1],h[2]] }),
+           bien: r => ![IA.SELECT_SUMMON, IA.SELECT_MONSTER_SET].includes(r?.action) || r.index !== 0 };
+});
+pos("pros 14-11", "…y sí contra dos guerreros boca arriba",
+    "contraejemplo", () => {
+  const d = mesa({ mios:{ mano:["Tribe-Infecting Virus","Sangan (GOAT)","Gravekeeper's Spy (GOAT)"] },
+                   suyos:{ campo:[{carta:"Blade Knight", pos:P.ATK},{carta:"Exiled Force", pos:P.ATK}], mano:["Pot of Greed"] }, turno:5 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ invoca:[h[0],h[1],h[2]], coloca:[h[0],h[1],h[2]] }),
+           bien: r => r?.action === IA.SELECT_SUMMON && r.index === 0 };
+});
+/* E, 14-11 (noche): «sigue haciendo cosas raras, como con BLS, haciendo el
+   efecto a sus propios monstruos… o Tsukuyomi a sí misma sin aportar nada». */
+pos("pros 14-11", "BLS no destierra con su campo vacío (el único objetivo sería mío)",
+    "E, 14-11: «BLS haciendo el efecto a sus propios monstruos»", () => {
+  const d = mesa({ mios:{ campo:[{carta:"Black Luster Soldier - Envoy of the Beginning (GOAT)", pos:P.ATK},{carta:"Breaker the Magical Warrior", pos:P.ATK}] },
+                   suyos:{ mt:["Mirror Force"], mano:["Pot of Greed"] }, turno:9 });
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.MZONE][0]] }), bien: r => r?.action !== IA.SELECT_ACTIVATE };
+});
+pos("pros 14-11", "…pero sí destierra su tapada",
+    "contraejemplo", () => {
+  const d = mesa({ mios:{ campo:[{carta:"Black Luster Soldier - Envoy of the Beginning (GOAT)", pos:P.ATK}] },
+                   suyos:{ campo:[{carta:"Sangan (GOAT)", pos:P.TAPADA|P.DEF}], mano:["Pot of Greed"] }, turno:9 });
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.MZONE][0]] }), bien: r => r?.action === IA.SELECT_ACTIVATE };
+});
+pos("pros 14-11", "…y con un 1600 boca arriba y nada tapado atrás, BLS ataca en vez de desterrar",
+    "BLS mata en combate y ataca otra vez", () => {
+  const d = mesa({ mios:{ campo:[{carta:"Black Luster Soldier - Envoy of the Beginning (GOAT)", pos:P.ATK}] },
+                   suyos:{ campo:[{carta:"Blade Knight", pos:P.ATK}], mano:["Pot of Greed"] }, turno:9 });
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.MZONE][0]] }), bien: r => r?.action !== IA.SELECT_ACTIVATE };
+});
+pos("pros 14-11", "Tsukuyomi sin nada que tumbar no se invoca (se tumbaría a sí misma)",
+    "E, 14-11: «Tsukuyomi a sí misma sin aportar nada»", () => {
+  const d = mesa({ mios:{ mano:["Tsukuyomi","Sangan (GOAT)"] },
+                   suyos:{ campo:[{carta:"Sheep Token", pos:P.DEF},{carta:"Sheep Token", pos:P.DEF}], mano:["Pot of Greed"] }, turno:8 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ invoca:[h[0],h[1]], coloca:[h[0],h[1]] }),
+           bien: r => !(r?.action === IA.SELECT_SUMMON && r.index === 0) };
+});
+pos("pros 14-11", "…y con su Breaker boca arriba, sí",
+    "contraejemplo", () => {
+  const d = mesa({ mios:{ mano:["Tsukuyomi","Sangan (GOAT)"] },
+                   suyos:{ campo:[{carta:"Breaker the Magical Warrior", pos:P.ATK}], mano:["Pot of Greed"] }, turno:8 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ invoca:[h[0],h[1]], coloca:[h[0],h[1]] }),
+           bien: r => r?.action === IA.SELECT_SUMMON && r.index === 0 };
+});
+/* ══════════════ LAS LLAVES DEL TABLERO (19-11) ══════════════
+   E: «la IA sigue overestimating o underestimating cartas como
+   Thousand-Eyes Restrict o Relinquished… tiene respuestas en mano (Book
+   of Moon, trampas, Tsukuyomi, Chaos) pero escoge limpiar otro monstruo,
+   porque ve que Relinquished es un 0/0 y no lee el efecto». */
+const resolviendo = (d, nombre, quien = 0) => { d.cadena = [{ code: cod(nombre), controller: quien }]; return d; };
+pos("llaves 19-11", "Chaos Sorcerer destierra el Relinquished de 0, no el Luster Dragon",
+    "E, 19-11: «escoge limpiar otro monstruo»", () => {
+  const d = resolviendo(mesa({ mios:{ campo:["Chaos Sorcerer"] },
+                   suyos:{ campo:["Luster Dragon", { carta:"Relinquished", atkReal:0, defReal:0 }] }, turno:8 }), "Chaos Sorcerer");
+  return { d, q: preguntaObjetivo(d.zones[1][L.MZONE].filter(Boolean)), bien: r => r?.indicies?.[0] === 1 };
+});
+pos("llaves 19-11", "…y el TER que absorbió un 1400 antes que un Airknight de 1900",
+    "el TER no me deja atacar ni cambiar de posición", () => {
+  const d = resolviendo(mesa({ mios:{ campo:["Chaos Sorcerer"] },
+                   suyos:{ campo:["Airknight Parshath", { carta:"Thousand-Eyes Restrict", atkReal:1400, defReal:1400 }] }, turno:8 }), "Chaos Sorcerer");
+  return { d, q: preguntaObjetivo(d.zones[1][L.MZONE].filter(Boolean)), bien: r => r?.indicies?.[0] === 1 };
+});
+pos("llaves 19-11", "Book of Moon en mi turno: a su Relinquished, no a su 1900",
+    "Book of Moon le rompe el equipo y no vuelve a absorber hasta voltear", () => {
+  const d = resolviendo(mesa({ mios:{ campo:["Breaker the Magical Warrior"] },
+                   suyos:{ campo:["Luster Dragon", { carta:"Relinquished", atkReal:1600, defReal:1600 }] }, turno:8 }), "Book of Moon");
+  return { d, q: preguntaObjetivo(d.zones[1][L.MZONE].filter(Boolean)), bien: r => r?.indicies?.[0] === 1 };
+});
+pos("llaves 19-11", "Book of Moon se activa en mi Main 1 contra su Relinquished",
+    "E, 19-11: «lo más lógico suele ser limpiarlas para poder avanzar el game state»", () => {
+  const d = mesa({ mios:{ mano:["Book of Moon"], campo:["Breaker the Magical Warrior"] },
+                   suyos:{ campo:[{ carta:"Relinquished", atkReal:1600, defReal:1600 }], mano:["Pot of Greed"] }, turno:8 });
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.HAND][0]] }), bien: r => r?.action === IA.SELECT_ACTIVATE };
+});
+pos("llaves 19-11", "Smashing Ground no se guarda delante de un Relinquished de 0",
+    "la reserva medía el ATK (umbral 1600) y la llave no llegaba", () => {
+  const d = mesa({ mios:{ mano:["Smashing Ground"] },
+                   suyos:{ campo:[{ carta:"Relinquished", atkReal:0, defReal:0 }], mano:["Pot of Greed","Sangan (GOAT)"] }, turno:8 });
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.HAND][0]] }), bien: r => r?.action === IA.SELECT_ACTIVATE };
+});
+pos("llaves 19-11", "mi TER me cierra el letal: Book of Moon a mi TER y a pegar",
+    "E, 19-11: «darle la vuelta con Book of Moon, pegar con cosas y en Main 2 voltear el TER»", () => {
+  const d = mesa({ mios:{ mano:["Book of Moon"],
+                          campo:[{ carta:"Thousand-Eyes Restrict", atkReal:1500, defReal:1500 }, "Luster Dragon"] },
+                   suyos:{ mano:["Pot of Greed"] }, lp:[8000,1800], turno:9 });
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.HAND][0]] }), bien: r => r?.action === IA.SELECT_ACTIVATE };
+});
+pos("llaves 19-11", "…pero por 1900 de daño no se tumba su propio TER",
+    "contraejemplo: «depende de la situación»", () => {
+  const d = mesa({ mios:{ mano:["Book of Moon"],
+                          campo:[{ carta:"Thousand-Eyes Restrict", atkReal:1500, defReal:1500 }, "Luster Dragon"] },
+                   suyos:{ mano:["Pot of Greed"] }, lp:[8000,8000], turno:9 });
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.HAND][0]] }), bien: r => r?.action !== IA.SELECT_ACTIVATE };
+});
+pos("llaves 19-11", "mi TER tumbado en la Main 2: se voltea para absorber otra vez",
+    "E, 19-11: «en main 2 voltear el TER y hacer su efecto»", () => {
+  const d = mesa({ mios:{ campo:[{ carta:"Thousand-Eyes Restrict", pos:P.TAPADA|P.DEF }, "Luster Dragon"] },
+                   suyos:{ campo:["Airknight Parshath"] }, turno:9, fase:0x100 });
+  return { d, q: preguntaIdle({ giros:[d.zones[0][L.MZONE][0]], bp:false }), bien: r => r?.action === IA.SELECT_POS_CHANGE };
+});
+pos("llaves 19-11", "…pero en la Main 1 con un atacante libre, espera (el TER le cerraría el ataque)",
+    "control", () => {
+  const d = mesa({ mios:{ campo:[{ carta:"Thousand-Eyes Restrict", pos:P.TAPADA|P.DEF }, "Luster Dragon"] },
+                   suyos:{ campo:["Sangan (GOAT)"] }, turno:9 });
+  return { d, q: preguntaIdle({ giros:[d.zones[0][L.MZONE][0]], bp:true }), bien: r => r?.action !== IA.SELECT_POS_CHANGE };
+});
+pos("llaves 19-11", "Ring of Destruction contra su Relinquished con equipo, aunque mi 1900 «le gane»",
+    "atacándolo se rompe el equipo y me devuelve el daño: no se mata en combate", () => {
+  const d = mesa({ mios:{ mt:["Ring of Destruction"], campo:["Luster Dragon"] },
+                   suyos:{ campo:[{ carta:"Relinquished", atkReal:1600, defReal:1600 }], mano:["Pot of Greed","Sangan (GOAT)"] }, turno:8 });
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.SZONE][0]] }), bien: r => r?.action === IA.SELECT_ACTIVATE };
+});
+pos("llaves 19-11", "…y contra su TER: con él boca arriba no ataca nadie",
+    "E, 19-11", () => {
+  const d = mesa({ mios:{ mt:["Ring of Destruction"], campo:["Luster Dragon"] },
+                   suyos:{ campo:[{ carta:"Thousand-Eyes Restrict", atkReal:1500, defReal:1500 }], mano:["Pot of Greed","Sangan (GOAT)"] }, turno:8 });
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.SZONE][0]] }), bien: r => r?.action === IA.SELECT_ACTIVATE };
+});
+/* ══════════════ BOOK OF MOON Y TSUKUYOMI (19-11) ══════════════
+   E: «la IA tiene que entender mucho mejor el alto value de Tsukuyomi y
+   Book of Moon… clásico plan contra Kycoo: invocas Tsukuyomi, efecto al
+   Kycoo, en defensa Tsukuyomi lo destruye en battle phase; la IA gastaría
+   un recurso más como Nobleman of Crossout». */
+const recuerda = (d, carta) => {          // la IA vio esa carta boca arriba antes de que la tumbaran
+  d.__memoriaIA ??= { 0:new Map(), 1:new Map() };
+  const dt = DB.get(carta.code);
+  d.__memoriaIA[0].set(carta.uid, { code:carta.code, nombre:NOMBRES[carta.code]?.name, datos:dt, atk:dt?.attack, def:dt?.defense });
+  return d;
+};
+pos("tsukuyomi 19-11", "Kycoo tumbado por mi Tsukuyomi: no se gasta Nobleman, lo mata Tsukuyomi pegando",
+    "E, 19-11: «la IA gastaría un recurso más como Nobleman of Crossout»", () => {
+  const d = mesa({ mios:{ mano:["Nobleman of Crossout"], campo:["Tsukuyomi"] },
+                   suyos:{ campo:[{ carta:"Kycoo the Ghost Destroyer", pos:P.TAPADA|P.DEF }], mano:["Pot of Greed"] }, turno:8 });
+  d.zones[0][L.MZONE][0].entroTurno = 8; recuerda(d, d.zones[1][L.MZONE][0]);
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.HAND][0]] }), bien: r => r?.action !== IA.SELECT_ACTIVATE };
+});
+pos("tsukuyomi 19-11", "…pero contra una tapada que no conozco, Nobleman sí",
+    "contraejemplo", () => {
+  const d = mesa({ mios:{ mano:["Nobleman of Crossout"], campo:["Tsukuyomi"] },
+                   suyos:{ campo:[{ carta:"Kycoo the Ghost Destroyer", pos:P.TAPADA|P.DEF }], mano:["Pot of Greed"] }, turno:8 });
+  d.zones[0][L.MZONE][0].entroTurno = 8;
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.HAND][0]] }), bien: r => r?.action === IA.SELECT_ACTIVATE };
+});
+pos("tsukuyomi 19-11", "contra su Kycoo boca arriba, Tsukuyomi sale",
+    "el plan clásico", () => {
+  const d = mesa({ mios:{ mano:["Tsukuyomi","Nobleman of Crossout"] },
+                   suyos:{ campo:["Kycoo the Ghost Destroyer"], mano:["Pot of Greed"] }, turno:8 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ invoca:[h[0]], coloca:[h[0]], activa:[h[1]] }), bien: r => r?.action === IA.SELECT_SUMMON && r.index === 0 };
+});
+pos("tsukuyomi 19-11", "Tsukuyomi nunca se tumba a sí misma si hay otro objetivo, aunque sea mío",
+    "E, 19-11: «NUNCA quiero ver que la IA juega Tsukuyomi y se hace el efecto sobre sí misma»", () => {
+  const d = resolviendo(mesa({ mios:{ campo:["Tsukuyomi","Luster Dragon"] }, suyos:{}, turno:8 }), "Tsukuyomi");
+  return { d, q: preguntaObjetivo(d.zones[0][L.MZONE].filter(Boolean)), bien: r => r?.indicies?.[0] === 1 };
+});
+pos("tsukuyomi 19-11", "Tsukuyomi recién invocada + Creature Swap: le doy el espíritu y me quedo su monstruo",
+    "E, 19-11: «es como robarle un monstruo al rival sin darle nada a cambio»", () => {
+  const d = mesa({ mios:{ mano:["Creature Swap"], campo:["Tsukuyomi"] },
+                   suyos:{ campo:[{ carta:"Kycoo the Ghost Destroyer", pos:P.TAPADA|P.DEF }], mano:["Pot of Greed"] }, turno:8 });
+  d.zones[0][L.MZONE][0].entroTurno = 8; recuerda(d, d.zones[1][L.MZONE][0]);
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.HAND][0]], bp:false }), bien: r => r?.action === IA.SELECT_ACTIVATE };
+});
+pos("tsukuyomi 19-11", "…y al resolverla, lo que doy es la Tsukuyomi",
+    "vuelve a mi mano en la End Phase", () => {
+  const d = resolviendo(mesa({ mios:{ campo:["Luster Dragon","Tsukuyomi"] },
+                   suyos:{ campo:["Kycoo the Ghost Destroyer"] }, turno:8 }), "Creature Swap");
+  d.zones[0][L.MZONE][1].entroTurno = 8;
+  return { d, q: preguntaObjetivo(d.zones[0][L.MZONE].filter(Boolean)), bien: r => r?.indicies?.[0] === 1 };
+});
+pos("tsukuyomi 19-11", "…pero no para llevarme un Sinister Serpent",
+    "contraejemplo: «solo cuando tenga sentido por el estado del tablero»", () => {
+  const d = mesa({ mios:{ mano:["Creature Swap"], campo:["Tsukuyomi"] },
+                   suyos:{ campo:["Sinister Serpent"], mano:["Pot of Greed"] }, turno:8 });
+  d.zones[0][L.MZONE][0].entroTurno = 8;
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.HAND][0]], bp:false }), bien: r => r?.action !== IA.SELECT_ACTIVATE };
+});
+pos("tsukuyomi 19-11", "Asura Priest limpia y luego Creature Swap por su monstruo (vuelve a mi mano)",
+    "E, 19-11: «usarla para limpiar un scapegoat y luego tradearla por el monstruo restante»", () => {
+  const d = mesa({ mios:{ mano:["Creature Swap"], campo:["Asura Priest"] },
+                   suyos:{ campo:["Breaker the Magical Warrior"], mano:["Pot of Greed"] }, turno:8, fase:0x100 });
+  d.zones[0][L.MZONE][0].entroTurno = 8; d.zones[0][L.MZONE][0].atacoTurno = 8;
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.HAND][0]], bp:false }), bien: r => r?.action === IA.SELECT_ACTIVATE };
+});
+pos("tsukuyomi 19-11", "Tsukuyomi a mi Magician of Faith con Pot of Greed en el cementerio",
+    "E, 19-11: «Magician of Faith u otros volteos con mucho value»", () => {
+  const d = mesa({ mios:{ mano:["Tsukuyomi"], campo:["Magician of Faith"], gy:["Pot of Greed"] }, suyos:{ mano:["Pot of Greed"] }, turno:8 });
+  const h = d.zones[0][L.HAND];
+  return { d, q: preguntaIdle({ invoca:[h[0]], coloca:[h[0]] }), bien: r => r?.action === IA.SELECT_SUMMON && r.index === 0 };
+});
+/* 19-11: midiendo los mazos nuevos con tres Solemn contra Beastdown. */
+pos("llaves 19-11", "Solemn Judgment no se paga contra un Delinquent Duo si después me matan",
+    "media vida delante de 3700 por turno", () => {
+  const d = resolviendo(mesa({ mios:{ mt:["Solemn Judgment"] },
+                   suyos:{ campo:["Berserk Gorilla","Enraged Battle Ox"], mano:["Pot of Greed"] }, lp:[4000,8000], turnPlayer:1, turno:8 }), "Delinquent Duo", 1);
+  return { d, q: preguntaCadena([d.zones[0][L.SZONE][0]]), bien: r => r?.index == null };
+});
+pos("llaves 19-11", "…y sin presión, a 8000, sí",
+    "contraejemplo", () => {
+  const d = resolviendo(mesa({ mios:{ mt:["Solemn Judgment"] }, suyos:{ mano:["Pot of Greed"] }, lp:[8000,8000], turnPlayer:1, turno:8 }), "Delinquent Duo", 1);
+  return { d, q: preguntaCadena([d.zones[0][L.SZONE][0]]), bien: r => r?.index === 0 };
+});
+/* ══════════════ FLOATERS (19-11) ══════════════
+   E: «¿es capaz de entender que si crashea su floater, aunque coma daño,
+   puede buscar una carta en su deck que resuelva la situación? ¿sabe que
+   invocar tu floater y hacer Creature Swap puede ser extremadamente
+   potente?». Los rulings, preguntados al motor en check-floaters.mjs. */
+const ataqueCon = (d) => preguntaBatalla([d.zones[0][L.MZONE][0]]);
+pos("floaters 19-11", "Giant Rat se estrella contra su Jinzo para sacar Exiled Force",
+    "E, 19-11: «aunque coma daño, puede buscar una carta que resuelva la mesa»", () => {
+  const d = mesa({ mios:{ campo:["Giant Rat"] }, suyos:{ campo:["Jinzo"], mano:["Pot of Greed"] }, turno:6, mazoMio:["Exiled Force","Mystical Elf"] });
+  return { d, q: ataqueCon(d), bien: r => r?.action === BA.SELECT_BATTLE };
+});
+pos("floaters 19-11", "…pero sin nada útil en el mazo, no se estrella",
+    "contraejemplo", () => {
+  const d = mesa({ mios:{ campo:["Giant Rat"] }, suyos:{ campo:["Jinzo"], mano:["Pot of Greed"] }, turno:6, mazoMio:["Mystical Elf"] });
+  return { d, q: ataqueCon(d), bien: r => r?.action !== BA.SELECT_BATTLE };
+});
+pos("floaters 19-11", "…ni con la vida justa (2000 LP, me como 1000)",
+    "contraejemplo: el daño cuesta el doble con poca vida", () => {
+  const d = mesa({ mios:{ campo:["Giant Rat"] }, suyos:{ campo:["Jinzo"], mano:["Pot of Greed"] }, lp:[2000,8000], turno:6, mazoMio:["Exiled Force"] });
+  return { d, q: ataqueCon(d), bien: r => r?.action !== BA.SELECT_BATTLE };
+});
+pos("floaters 19-11", "Pyramid Turtle se estrella contra Airknight: sale Ryu Kokki y le gana en esa batalla",
+    "el reclutado ataca en la misma Battle Phase (check-floaters)", () => {
+  const d = mesa({ mios:{ campo:["Pyramid Turtle"] }, suyos:{ campo:["Airknight Parshath"], mano:["Pot of Greed"] }, turno:6, mazoMio:["Ryu Kokki"] });
+  return { d, q: ataqueCon(d), bien: r => r?.action === BA.SELECT_BATTLE };
+});
+pos("floaters 19-11", "Creature Swap: le doy mi Giant Rat y me llevo su Breaker",
+    "E, 19-11: «robas el monstruo rival y si destruyes tu floater intercambiado, sigues teniendo su efecto»", () => {
+  const d = mesa({ mios:{ mano:["Creature Swap"], campo:["Giant Rat","Luster Dragon"] }, suyos:{ campo:["Breaker the Magical Warrior"], mano:["Pot of Greed"] }, turno:6, mazoMio:["Exiled Force"] });
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.HAND][0]] }), bien: r => r?.action === IA.SELECT_ACTIVATE };
+});
+pos("floaters 19-11", "…y sin batalla por delante para matarla, no",
+    "contraejemplo: sin matarla, es darle una Rata", () => {
+  const d = mesa({ mios:{ mano:["Creature Swap"], campo:["Giant Rat","Luster Dragon"] }, suyos:{ campo:["Breaker the Magical Warrior"], mano:["Pot of Greed"] }, turno:6, mazoMio:["Exiled Force"] });
+  return { d, q: preguntaIdle({ activa:[d.zones[0][L.HAND][0]], bp:false }), bien: r => r?.action !== IA.SELECT_ACTIVATE };
+});
+pos("floaters 19-11", "al resolver Creature Swap, lo que doy es el floater",
+    "control", () => {
+  const d = resolviendo(mesa({ mios:{ campo:["Luster Dragon","Giant Rat"] }, suyos:{ campo:["Airknight Parshath"] }, turno:6 }), "Creature Swap");
+  return { d, q: preguntaObjetivo(d.zones[0][L.MZONE].filter(Boolean)), bien: r => r?.indicies?.[0] === 1 };
+});
+pos("floaters 19-11", "mi Giant Rat en su campo: entre ella y su Mystic Tomato, ataca a la mía (el reclutamiento es mío)",
+    "check-floaters, caso 1: la Rata va a MI cementerio y saca de MI mazo", () => {
+  const d = mesa({ mios:{ campo:["Breaker the Magical Warrior"] },
+                   suyos:{ campo:["Mystic Tomato", { carta:"Giant Rat", dueño:0 }], mano:["Pot of Greed"] }, turno:6, fase:0x10, mazoMio:["Exiled Force"] });
+  return { d, previo: cb => cb(preguntaBatalla([d.zones[0][L.MZONE][0]]), 0),
+           q: preguntaObjetivo(d.zones[1][L.MZONE].filter(Boolean)), bien: r => r?.indicies?.[0] === 1 };
+});
+/* E, 19-11: «depende de si tiene backrow para el Ryu Kokki o no». */
+pos("floaters 19-11", "1900 contra su Pyramid Turtle sin nada boca abajo: no se ataca (sale un 2400)",
+    "E, 19-11: «depende de si tiene backrow para el Ryu Kokki»", () => {
+  const d = mesa({ mios:{ campo:["Luster Dragon"] }, suyos:{ campo:["Pyramid Turtle"], mano:["Pot of Greed"] }, turno:6 });
+  return { d, q: preguntaBatalla([d.zones[0][L.MZONE][0]]), bien: r => r?.action !== BA.SELECT_BATTLE };
+});
+pos("floaters 19-11", "…y con Sakuretsu Armor puesta, sí: lo que salga se come la trampa",
+    "contraejemplo", () => {
+  const d = mesa({ mios:{ campo:["Luster Dragon"], mt:["Sakuretsu Armor"] }, suyos:{ campo:["Pyramid Turtle"], mano:["Pot of Greed"] }, turno:6 });
+  return { d, q: preguntaBatalla([d.zones[0][L.MZONE][0]]), bien: r => r?.action === BA.SELECT_BATTLE };
+});
+pos("floaters 19-11", "…y con Bottomless Trap Hole, también (lo que sale es invocación especial)",
+    "contraejemplo", () => {
+  const d = mesa({ mios:{ campo:["Luster Dragon"], mt:["Bottomless Trap Hole"] }, suyos:{ campo:["Pyramid Turtle"], mano:["Pot of Greed"] }, turno:6 });
+  return { d, q: preguntaBatalla([d.zones[0][L.MZONE][0]]), bien: r => r?.action === BA.SELECT_BATTLE };
 });
 /* ══════════════ ejecutar ══════════════ */
 const familias = new Map();
