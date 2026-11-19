@@ -94,6 +94,9 @@ const filtroMotor = (p, e) => {
   if(rel === "deckbuilder/deckbuilder.html") return false;
   if(partes[0] === "data" && partes.length === 2 && FUERA_DATOS.test(e.name)) return false;
   if(/^_/.test(e.name)) return false;                                     // borradores (archivos y carpetas: _navegador/)
+  /* El modo draft se queda en el ordenador de E (19-11). */
+  if(rel === "draft" || rel === "data/draft" || rel === "browser/src/draft"
+     || /^(check-draft.*|medir-draft|medir-mesas|medir-constructor|calibrar-draft)\.mjs$|^ajustar-notas\.py$/.test(e.name)) return false;
   /* .jsonl: datos crudos de medir (calibracion.jsonl del draft son 8 MB);
      lo que usa el juego ya está resumido en data/. */
   if(e.isFile() && /\.(log|zip|tgz|jsonl)$|^goat-log-|^goat-copia-/.test(e.name)) return false;

@@ -6,7 +6,7 @@ W="$(cd "$(dirname "$0")" && pwd)"
 echo "── datos ──"
 [ -f "$W/data/full_cards.json" ] || python3 "$W/data/export_cards.py"
 echo "── Retro Pack 2 (modo draft) ──"
-( cd "$W/draft" && node importar-rp02.mjs | head -1 )
+[ -d "$W/draft" ] && ( cd "$W/draft" && node importar-rp02.mjs | head -1 )
 echo "── scripts Lua de todo el pool ──"
 cd "$W/browser" && node build-scripts.mjs "$W/data/goat-pool.json"
 echo "── simulador ──"
@@ -90,5 +90,5 @@ node check-moneda.mjs 2>&1 | tail -1
 # Replays de torneo de DuelingBook: que el importador lea bien la final del GFCEU 2026 y el marcador se empaquete.
 ( cd "$W/replays" && node build-bookmarklet.mjs >/dev/null && node check-replays.mjs 2>&1 | tail -1 )
 # Modo draft: la IA de picks, el constructor y el suizo (sin motor), y las 101 cartas EN el motor.
-node check-draft.mjs 2>&1 | tail -1
-node check-draft-cartas.mjs 40 2>&1 | tail -1
+[ -f check-draft.mjs ] && node check-draft.mjs 2>&1 | tail -1
+[ -f check-draft-cartas.mjs ] && node check-draft-cartas.mjs 40 2>&1 | tail -1

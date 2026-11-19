@@ -10,6 +10,14 @@ import { readFileSync, writeFileSync, existsSync } from "node:fs";
    trabajo (`out/goat.html`) sigue llevándolos. */
 const VERSION = "1.3";
 const PUBLICO = process.env.GOAT_PUBLICO === "1";
+/* El modo draft (Retro Pack 2) es solo de E (19-11: «quita el modo draft»
+   de la versión pública). En la pública no va ni la pantalla, ni el botón,
+   ni las 101 cartas; y quien construya desde el repo, que no trae
+   src/draft/, sale igual. */
+const SIN_DRAFT = PUBLICO || !existsSync("./src/draft/draft.js");
+/* Las traducciones del draft van en un bloque propio al final de la tabla:
+   desde su comentario hasta el cierre `};`. */
+const sinBloqueDraft = txt => txt.replace(/\n  \/\* ── modo draft[\s\S]*?(?=\n};)/, "");
 const R = f => readFileSync(f,"utf-8");
 const stripExports = s => s.replace(/^export\s+(const|function|class|async function|let)/gm,"$1")
                            .replace(/^export\s*\{[^}]*\}\s*;?\s*$/gm,"");
@@ -109,7 +117,7 @@ const iife = (body, returns) => `(()=>{\n${body}\nreturn {${returns}};\n})()`;
 const parts = [
 `${stripExports(R("./out/cardback.js"))}`,
 // el módulo de idiomas va PRIMERO: deja __T en globalThis y el resto lo usa
-`const I18N = ${iife(stripExports(R("./src/i18n.js")), "T, setIdioma, idioma, traducirDOM")};`,
+`const I18N = ${iife(stripExports(SIN_DRAFT ? sinBloqueDraft(R("./src/i18n.js")) : R("./src/i18n.js")), "T, setIdioma, idioma, traducirDOM")};`,
 `const {T:__T_, setIdioma:__setIdioma, traducirDOM:__traducirDOM} = I18N;`,
 `const __OCG__ = (()=>{\n${core}\n})();`,
 `const {SCRIPTS, scriptReader} = ${iife(stripExports(R("./out/scripts.bundle.js")), "SCRIPTS, scriptReader")};`,
@@ -129,7 +137,7 @@ const parts = [
 `const {crearCerebro, NIVELES, combinacionesSuma:__combIA, crearPensador, planDeSide, diagnosticar, valorCarta:__valorCarta, planDe:__planDe, canon:__canon} = ${iife(juntarIA(), "crearCerebro, NIVELES, combinacionesSuma, crearPensador, planDeSide, diagnosticar, valorCarta, planDe, canon")};`,
 `${(comprobarExports(vistaFuente, LISTA_VIEW, "src/view.js"), "")}` +
   `const View = ${iife(stripExports(vistaFuente), LISTA_VIEW)};`,
-`const Draft = ${iife(juntarDraft(), LISTA_DRAFT)};`,
+SIN_DRAFT ? `const Draft = null;` : `const Draft = ${iife(juntarDraft(), LISTA_DRAFT)};`,
 `const Story = ${iife(juntarStory(),
    "crearHistoria, crearAlmacen, nuevaRun, sembrarManoDeJefe, crearCatalogo, FAMILIAS, generarMapa, semillaTexto, rngDeSemilla, exportarProgreso, importarProgreso, cargarMeta, CHIPS, ACTOS, montarReino")};`,
 // Salas para jugar con un amigo: qué viaja y cómo se filtra (sala.js) y
@@ -191,9 +199,12 @@ const html = R("./src/template.html")
   .replace("/*__STORY_EVENTOS__*/",   () => R("../data/story/eventos.json"))
   /* Las 101 cartas de RP02 (engine/draft/importar-rp02.mjs), la pantalla
      del draft y su estilo. */
-  .replace("/*__RP02__*/",            () => R("../data/draft/rp02.json"))
-  .replace("/*__DRAFT_UI__*/",        () => R("./src/draft/pantalla.txt"))
-  .replace("/*__DRAFT_CSS__*/",       () => R("./src/draft/draft.css"));
+  .replace(/\/\* Retro Pack 2: las 101 cartas[^\n]*\n/, m => SIN_DRAFT ? "" : m)
+  .replace("/*__RP02__*/",            () => SIN_DRAFT ? "null" : R("../data/draft/rp02.json"))
+  .replace("/*__DRAFT_UI__*/",        () => SIN_DRAFT ? "" : R("./src/draft/pantalla.txt"))
+  .replace("/*__DRAFT_CSS__*/",       () => SIN_DRAFT ? "" : R("./src/draft/draft.css"))
+  .replace(/\s*<button class="mbig sec" id="irDraft">[^<]*<\/button>/, m => SIN_DRAFT ? "" : m)
+  .replace(/<!-- ══ MODO DRAFT[^\n]*\n<div id="draft" hidden><div id="dCaja"><\/div><\/div>\n/, m => SIN_DRAFT ? "" : m);
 
 const SALIDA = PUBLICO ? "./out/goat-publico.html" : "./out/goat.html";
 writeFileSync(SALIDA, html);

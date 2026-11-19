@@ -15,7 +15,7 @@ against your friends. Free, no install, no account. **Build 1.3.**
 
 ---
 
-## Build 1.3 — a smarter AI, a draft mode and more decks
+## Build 1.3 — a smarter AI and more decks
 
 - **The AI studied 122 tournament replays.** It was put in every position of real Dueling Book
   games from top players and compared with what they did. From that it now draws and searches
@@ -46,9 +46,6 @@ against your friends. Free, no install, no account. **Build 1.3.**
   Relinquished Control. The Swiss tournament has much more variety now (fewer Goat Control and
   Chaos mirrors, more aggro), with the matchup table measured again over 27,600 games.
 - **Avatars in the tournament:** pick yours when you register; every bot has its own face.
-- **Draft · Retro Pack 2:** 18 seats (you and 17 bots), six packs of 9, pick and pass, build your
-  deck and play a Swiss event with a round timer. The bots draft with their own styles and play
-  their decks with a plan.
 
 ## Build 1.2 — fixes from your GitHub issues
 
@@ -124,7 +121,6 @@ simulator.
   - **Duelist Kingdom** — a roguelike run across the island, up to Pegasus.
   - **Free Duel (Bo1)** — 24 premade meta decks ready to play, or your own.
   - **Swiss Tournament (Bo3)** — Swiss rounds and a top cut, with side decking.
-  - **Draft · Retro Pack 2** — an 18-player booster draft against bots.
 - **PvP mode**
   - **Play with a friend** — custom decks, Bo1 or Bo3, with side decking.
 - **Deck builder** with the 1,685 cards legal in the format and the real GOAT banlist.
@@ -173,13 +169,6 @@ GOAT top cut. Your table is a real Bo3; the other tables are resolved with a mat
 table measured over 27,600 bot-vs-bot games.
 
 ![Swiss tournament](docs/img/torneo.jpg)
-
-### Draft · Retro Pack 2
-
-A booster draft like the ones at your local store: 18 seats (you and 17 bots), six packs of
-Retro Pack 2 with nine cards each, pick one and pass. Then you build your deck from your picks
-and play a Swiss event in best of three, with a round timer. The bots draft with their own
-styles, read what's being passed, and play the deck they built with its own plan.
 
 ### Play with a friend
 

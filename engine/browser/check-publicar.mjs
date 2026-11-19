@@ -46,6 +46,10 @@ else ok("el juego arranca en inglés por defecto");
                                                           : mal("la depuración depende de goatDebug");
   /Build 1\.3/.test(html) ? ok("el menú dice Build 1.3") : mal("el menú dice Build 1.3");
   /mesa.real|SpeechRecognition/i.test(html) ? mal("la mesa real no va en la versión pública") : ok("la mesa real no va en la versión pública");
+  /* 19-11, E: «quita el modo draft» de la pública. */
+  (/id="irDraft"|Retro Pack 2|abrirDraft/.test(html)) ? mal("el modo draft no va en la versión pública") : ok("el modo draft no va en la versión pública");
+  (existsSync(R+"engine/browser/src/draft") || existsSync(R+"engine/data/draft") || existsSync(R+"engine/draft"))
+    ? mal("las fuentes no llevan el modo draft") : ok("las fuentes no llevan el modo draft");
   const borr = []; (function anda(d){ for(const e of require("node:fs").readdirSync(d,{withFileTypes:true})){
     if(e.name === ".git") continue; const p = d+"/"+e.name;
     if(e.isDirectory()) anda(p); else if(/^_.*\.mjs$|^goat-log-|^goat-copia-|\.log$/.test(e.name) || /\/replays\//.test(p)) borr.push(p); } })(R+"engine");
